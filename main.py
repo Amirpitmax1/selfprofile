@@ -13,8 +13,15 @@ from telethon import TelegramClient, events, Button
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.errors import SessionPasswordNeededError, FloodWaitError
-from telethon.tl.types import ReplyKeyboardRemove, MessageMediaContact
+from telethon.tl.types import MessageMediaContact
 from telethon.sessions import StringSession
+
+# --- Workaround for ReplyKeyboardRemove ImportError ---
+# This class acts as a placeholder to prevent the bot from crashing.
+class ReplyKeyboardRemove:
+    def __init__(self):
+        self.remove_keyboard = True
+        self.selective = False
 
 # --- General Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

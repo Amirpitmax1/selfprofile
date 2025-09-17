@@ -7,9 +7,9 @@ from telethon.tl.functions.auth import SignInRequest, SignUpRequest, SendCodeReq
 from telethon.tl.types import (
     KeyboardButton,
     ReplyKeyboardMarkup,
-    MessageMediaContact,
-    ReplyKeyboardRemove
+    MessageMediaContact
 )
+from telethon.tl.types import ReplyKeyboardRemove
 from telethon import Button
 import datetime
 import pytz

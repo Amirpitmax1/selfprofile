@@ -8,6 +8,7 @@ import pytz
 import redis
 import json
 import uuid
+import time # Import the time module
 
 from telethon import TelegramClient, events, Button
 from telethon.tl.functions.users import GetFullUserRequest
@@ -280,6 +281,12 @@ async def callback_handler(event):
 
 # --- Main function to run the bot ---
 async def main():
+    # A check to ensure the user has updated the BOT_TOKEN
+    if BOT_TOKEN == '8495719978:AAGeIZtJFRkSaYqn3LwhVMUtyh2KNAGj9g':
+        logging.error("BOT_TOKEN is the default placeholder. Please replace it with your actual bot token.")
+        # We exit here so Render doesn't loop forever trying to start with an invalid token
+        return
+
     await main_bot.start(bot_token=BOT_TOKEN)
     logging.info("Main bot started successfully!")
     await main_bot.run_until_disconnected()

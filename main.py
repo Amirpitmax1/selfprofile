@@ -7,8 +7,7 @@ from telethon.tl.functions.auth import SignInRequest, SignUpRequest, SendCodeReq
 from telethon.tl.types import (
     KeyboardButton,
     ReplyKeyboardMarkup,
-    MessageMediaContact,
-    ReplyKeyboardRemove
+    MessageMediaContact
 )
 import datetime
 import pytz
@@ -19,6 +18,14 @@ import time
 import uuid
 import os
 from aiohttp import web
+
+# --- Workaround for ReplyKeyboardRemove ImportError ---
+# This class acts as a placeholder to prevent the bot from crashing.
+# It should be removed if the underlying library issue is fixed.
+class ReplyKeyboardRemove:
+    def __init__(self):
+        self.remove_keyboard = True
+        self.selective = False
 
 # --- General Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

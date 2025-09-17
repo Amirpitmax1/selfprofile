@@ -45,7 +45,8 @@ redis_client = redis.from_url(REDIS_URL)
 
 # --- Clients ---
 # This is the main bot client that users interact with
-main_bot = TelegramClient('main_bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+# We no longer call .start() here to avoid the event loop conflict
+main_bot = TelegramClient('main_bot_session', API_ID, API_HASH)
 
 # --- User and Access Management ---
 def get_user_data(user_id):
@@ -276,10 +277,14 @@ async def run_ping_server():
 # --- Main Bot Running ---
 async def main():
     """Main function to run the bot and the ping server."""
-    # Start the ping server as a background task.
-    asyncio.create_task(run_ping_server())
-    # Run the bot until it's disconnected.
-    await main_bot.run_until_disconnected()
+    # Use 'async with' to correctly manage the bot's event loop
+    async with main_bot:
+        # Gather all tasks to be run concurrently on the same event loop
+        await asyncio.gather(
+            run_ping_server(),
+            main_bot.run_until_disconnected()
+        )
 
 if __name__ == '__main__':
     asyncio.run(main())
+

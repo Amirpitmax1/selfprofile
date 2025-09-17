@@ -276,11 +276,10 @@ async def run_ping_server():
 # --- Main Bot Running ---
 async def main():
     """Main function to run the bot and the ping server."""
-    # Start the ping server and the bot concurrently
-    await asyncio.gather(
-        run_ping_server(),
-        main_bot.run_until_disconnected()
-    )
+    # Start the ping server as a background task.
+    asyncio.create_task(run_ping_server())
+    # Run the bot until it's disconnected.
+    await main_bot.run_until_disconnected()
 
 if __name__ == '__main__':
     asyncio.run(main())

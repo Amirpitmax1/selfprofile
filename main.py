@@ -1,140 +1,121 @@
-# Telegram Userbot with Interactive Login and Ping Server
-import asyncio
-from telethon import TelegramClient, events, Button
-from telethon.tl.functions.account import UpdateProfileRequest
-from telethon.tl.functions.users import GetFullUserRequest
-from telethon.tl.functions.auth import SignInRequest, SignUpRequest, SendCodeRequest
-from telethon.tl.types import (
-    KeyboardButton,
-    ReplyKeyboardMarkup,
-    MessageMediaContact
-)
-import datetime
-import pytz
-import logging
-import json
-import redis
-import time
-import uuid
-import os
-from aiohttp import web
+# -*- coding: utf-8 -*-
 
-# --- Workaround for ReplyKeyboardRemove ImportError ---
-# This class acts as a placeholder to prevent the bot from crashing.
-# It should be removed if the underlying library issue is fixed.
-class ReplyKeyboardRemove:
-    def __init__(self):
-        self.remove_keyboard = True
-        self.selective = False
+import asyncio
+import datetime
+import logging
+import os
+import pytz
+import redis
+import json
+import uuid
+
+from telethon import TelegramClient, events, Button
+from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.functions.account import UpdateProfileRequest
+from telethon.errors import SessionPasswordNeededError, FloodWaitError
+from telethon.tl.types import ReplyKeyboardRemove, MessageMediaContact
+from telethon.sessions import StringSession
 
 # --- General Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load environment variables
-API_ID = int(os.environ.get('API_ID', 28190856))
-API_HASH = os.environ.get('API_HASH', '6b9b5309c2a211b526c6ddad6eabb521')
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '8495719978:AAGeIZtJFRkSaYqn3LwhVMUtyxozKNAGj9g')
+API_ID = int(os.environ.get('API_ID', '28190856')) # Replace with your API_ID
+API_HASH = os.environ.get('API_HASH', '6b9b5309c2a211b526c6ddad6eabb521') # Replace with your API_HASH
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '8495719978:AAGeIZtJFRkSaYqn3LwhVMUtyh2KNAGj9g') # Replace with your Bot Token
 
-# Admin User ID for permanent access
-ADMIN_ID = int(os.environ.get('ADMIN_ID', 7423552124))
+# Admin User ID
+ADMIN_ID = int(os.environ.get('ADMIN_ID', '7423552124')) # Replace with your Admin ID
 
 # Redis connection for Key-Value database
-# This should be your Redis server address in Render env variables
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-redis_client = redis.from_url(REDIS_URL)
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 # --- Clients ---
 # This is the main bot client that users interact with
-# We initialize the client but do not start it here.
 main_bot = TelegramClient('main_bot_session', API_ID, API_HASH)
 
-# --- User and Access Management ---
+# --- User and Access Management with Redis ---
 def get_user_data(user_id):
     """Retrieves user data from Redis."""
-    data = redis_client.get(f'user:{user_id}')
-    return json.loads(data) if data else None
+    data = redis_client.get(f'user_data:{user_id}')
+    return json.loads(data) if data else {}
 
 def save_user_data(user_id, data):
     """Saves user data to Redis."""
-    redis_client.set(f'user:{user_id}', json.dumps(data))
+    redis_client.set(f'user_data:{user_id}', json.dumps(data))
+
+def is_user_logged_in(user_id):
+    """Checks if a user is logged in to their userbot session."""
+    return redis_client.exists(f'session:{user_id}')
 
 def is_user_active(user_id):
     """Checks if a user is active (free trial or permanent access)."""
     user_data = get_user_data(user_id)
     if not user_data:
         return False
-    
-    # Check for permanent access
-    if user_data.get('access_type') == 'permanent':
-        return True
         
-    # Check for free trial validity
-    end_time = user_data.get('trial_end_time')
-    if end_time and time.time() < end_time:
+    if user_data.get('is_permanent', False):
+        return True
+    
+    trial_end_time = user_data.get('trial_end_time')
+    if trial_end_time and time.time() < trial_end_time:
         return True
         
     return False
 
-def generate_invite_link(user_id):
-    """Generates a unique invite link for a user."""
-    user_data = get_user_data(user_id)
-    if not user_data:
-        # Create new user data if it doesn't exist
-        user_data = {
-            'invite_code': str(uuid.uuid4()),
-            'trial_end_time': time.time() + 30 * 24 * 60 * 60, # 30 days trial
-            'invited_count': 0
-        }
-        save_user_data(user_id, user_data)
-    
-    return f"https://t.me/YourBotUsername?start={user_data['invite_code']}"
-
 # --- Userbot Management ---
-async def start_userbot_session(user_id, phone, code_hash, code, password=None):
+async def start_userbot_session(user_id, phone, code, password=None):
     """
     Starts a new userbot session for a given user.
     """
-    session_name = f'sessions/user_{user_id}'
-    user_client = TelegramClient(session_name, API_ID, API_HASH)
-    
+    session_string = redis_client.get(f'session:{user_id}')
+    if session_string:
+        user_client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+    else:
+        user_client = TelegramClient(StringSession(), API_ID, API_HASH)
+
     try:
         await user_client.connect()
+        if not await user_client.is_user_authorized():
+            # Check for 2FA password
+            if password:
+                await user_client.sign_in(phone=phone, code=code, password=password)
+            else:
+                await user_client.sign_in(phone=phone, code=code)
         
-        # Check if already authorized
-        if await user_client.is_user_authorized():
-            logging.info(f"User {user_id} already logged in.")
-            return True
-            
-        # Try to sign in with phone, code, and optional password
-        if password:
-            await user_client.sign_in(phone=phone, code=code, password=password)
-        else:
-            await user_client.sign_in(phone=phone, code=code)
-            
         logging.info(f"User {user_id} logged in successfully!")
         
+        # Save the new session string
+        redis_client.set(f'session:{user_id}', user_client.session.save())
+
         # Start the clock update task in the background
         asyncio.create_task(update_profile_name(user_client, user_id))
         
-        return True
+        return True, "ورود موفقیت‌آمیز بود! ساعت پروفایل شما هر دقیقه به‌روزرسانی خواهد شد."
+    except FloodWaitError as e:
+        logging.error(f"Flood wait for user {user_id}: {e.seconds} seconds.")
+        return False, f"تلگرام به دلیل تلاش‌های زیاد، شما را برای {e.seconds} ثانیه محدود کرده است."
+    except SessionPasswordNeededError:
+        logging.warning(f"User {user_id} requires 2FA password.")
+        return False, "two_factor"
     except Exception as e:
         logging.error(f"Failed to log in user {user_id}: {e}")
-        return False
+        return False, "خطا در ورود. لطفاً اطلاعات را بررسی کنید."
 
 # --- Profile Update Logic ---
 async def update_profile_name(user_client, user_id):
     """
-    Updates the profile name with live clock.
+    Updates the profile name with a live clock.
     """
     try:
         user = await user_client(GetFullUserRequest('me'))
         base_name = user.full_user.first_name
-        if user.full_user.last_name:
-            base_name += " " + user.full_user.last_name
         
         tz = pytz.timezone('Asia/Tehran')
         
         while True:
+            # Check if the user is still active
             if not is_user_active(user_id):
                 logging.info(f"User {user_id} is no longer active. Stopping clock update.")
                 break
@@ -142,7 +123,6 @@ async def update_profile_name(user_client, user_id):
             now = datetime.datetime.now(tz)
             time_str = now.strftime('%H:%M')
             
-            # Add different styles here (emojis, etc.)
             new_name = f"{base_name} | {time_str}"
             
             try:
@@ -150,7 +130,7 @@ async def update_profile_name(user_client, user_id):
                 logging.info(f"Updated profile name for {user_id} to {new_name}")
             except Exception as e:
                 logging.warning(f"Failed to update profile for {user_id}: {e}")
-            
+                
             await asyncio.sleep(60)
             
     except Exception as e:
@@ -158,132 +138,143 @@ async def update_profile_name(user_client, user_id):
 
 # --- Bot Event Handlers ---
 @main_bot.on(events.NewMessage(pattern='/start'))
-async def start(event):
+async def start_handler(event):
     chat_id = event.chat_id
     
-    # Check if user is already logged in
-    user_data = get_user_data(chat_id)
-    if user_data and user_data.get('phone_number'):
-        # If user is logged in, show the main menu
+    if is_user_logged_in(chat_id):
         await send_main_menu(chat_id, 'به منوی اصلی خوش آمدید.', event)
     else:
-        # If not logged in, ask for phone number
         await event.reply(
             'برای فعال‌سازی ساعت، لطفاً با کلیک بر روی دکمه زیر وارد حساب خود شوید.',
-            buttons=[Button.request_phone('ورود با شماره تلفن')])
+            buttons=[Button.request_phone('ورود با شماره تلفن')]
+        )
+
+@main_bot.on(events.NewMessage(func=lambda e: isinstance(e.media, MessageMediaContact)))
+async def contact_handler(event):
+    chat_id = event.chat_id
+    phone_number = event.media.phone_number
+    
+    # Save phone number to Redis to be used later
+    user_data = get_user_data(chat_id)
+    user_data['phone_number'] = phone_number
+    save_user_data(chat_id, user_data)
+    
+    try:
+        user_client = TelegramClient(StringSession(), API_ID, API_HASH)
+        await user_client.connect()
+        send_code_request = await user_client.send_code_request(phone_number)
+        user_data['phone_code_hash'] = send_code_request.phone_code_hash
+        save_user_data(chat_id, user_data)
+        
+        await event.reply('کد تأیید به تلگرام شما ارسال شد. لطفاً آن را اینجا وارد کنید.', buttons=ReplyKeyboardRemove())
+    except Exception as e:
+        logging.error(f"Failed to send auth code: {e}")
+        await event.reply('خطا در ارسال کد تأیید. لطفاً مجدداً تلاش کنید.')
 
 @main_bot.on(events.NewMessage)
 async def message_handler(event):
     chat_id = event.chat_id
+    text = event.raw_text
     user_data = get_user_data(chat_id)
     
-    if event.media and isinstance(event.media, MessageMediaContact):
-        # Step 1: User shares phone number
-        phone_number = event.media.phone_number
-        user_data['phone_number'] = phone_number
-        save_user_data(chat_id, user_data)
-        
-        try:
-            client = TelegramClient(f'sessions/user_{chat_id}', API_ID, API_HASH)
-            await client.connect()
-            send_code_request = await client(SendCodeRequest(phone=phone_number))
-            user_data['code_hash'] = send_code_request.phone_code_hash
-            save_user_data(chat_id, user_data)
-            
-            await event.reply('کد تأیید به تلگرام شما ارسال شد. لطفاً آن را اینجا وارد کنید.',
-                              buttons=ReplyKeyboardRemove())
-        except Exception as e:
-            logging.error(f"Failed to send auth code: {e}")
-            await event.reply('خطا در ارسال کد تأیید. لطفاً مجدداً تلاش کنید.')
-            
-    elif user_data and 'code_hash' in user_data:
-        # Step 2: User provides auth code
-        code = event.text
+    if 'phone_code_hash' in user_data:
+        # User provides auth code
+        code = text
         phone_number = user_data.get('phone_number')
-        code_hash = user_data.get('code_hash')
+        code_hash = user_data.get('phone_code_hash')
         
-        try:
-            user_client = TelegramClient(f'sessions/user_{chat_id}', API_ID, API_HASH)
-            await user_client.connect()
-            
-            await user_client(SignInRequest(phone=phone_number, phone_code_hash=code_hash, phone_code=code))
-            
-            del user_data['code_hash']
+        success, message = await start_userbot_session(chat_id, phone_number, code)
+        
+        if success:
+            del user_data['phone_code_hash']
             save_user_data(chat_id, user_data)
-            
-            await event.reply('ورود موفقیت‌آمیز بود! ساعت پروفایل شما هر دقیقه به‌روزرسانی خواهد شد.',
-                              buttons=ReplyKeyboardRemove())
-            asyncio.create_task(update_profile_name(user_client, chat_id))
-            
-        except Exception as e:
-            if 'auth.signin.PasswordRequiredError' in str(e):
+            await event.reply(message, buttons=ReplyKeyboardRemove())
+            await send_main_menu(chat_id, 'به منوی اصلی خوش آمدید.', event)
+        else:
+            if message == "two_factor":
                 user_data['auth_flow'] = 'password'
+                del user_data['phone_code_hash']
                 save_user_data(chat_id, user_data)
                 await event.reply('حساب شما دارای رمز دو مرحله‌ای است. لطفاً رمز عبور خود را وارد کنید.')
             else:
-                logging.error(f"Failed to sign in: {e}")
-                await event.reply('کد تأیید اشتباه است. لطفاً مجدداً تلاش کنید.')
-                
-    elif user_data and user_data.get('auth_flow') == 'password':
-        # Step 3: User provides 2FA password
-        password = event.text
+                await event.reply(message)
+    
+    elif user_data.get('auth_flow') == 'password':
+        # User provides 2FA password
+        password = text
         phone_number = user_data.get('phone_number')
         
-        try:
-            user_client = TelegramClient(f'sessions/user_{chat_id}', API_ID, API_HASH)
-            await user_client.connect()
-            
-            await user_client.sign_in(password=password, phone=phone_number)
-            
+        success, message = await start_userbot_session(chat_id, phone_number, None, password)
+        
+        if success:
             del user_data['auth_flow']
             save_user_data(chat_id, user_data)
-            
-            await event.reply('رمز عبور صحیح است. ساعت پروفایل شما فعال شد!',
-                              buttons=ReplyKeyboardRemove())
-            asyncio.create_task(update_profile_name(user_client, chat_id))
-            
-        except Exception as e:
-            logging.error(f"Failed to sign in with password: {e}")
-            await event.reply('رمز عبور اشتباه است. لطفاً دوباره تلاش کنید.')
+            await event.reply(message, buttons=ReplyKeyboardRemove())
+            await send_main_menu(chat_id, 'به منوی اصلی خوش آمدید.', event)
+        else:
+            await event.reply(message)
 
 # --- Utility Functions ---
 async def send_main_menu(chat_id, text, event=None):
-    # This is a placeholder for your bot's main menu
-    # You can add buttons for invite link, check status, etc. here
     buttons = [
         [Button.inline('دریافت لینک دعوت', b'get_invite')],
-        [Button.inline('وضعیت حساب', b'check_status')]
+        [Button.inline('وضعیت حساب', b'check_status')],
+        [Button.inline('توقف ساعت', b'stop_clock')]
     ]
     if event:
         await event.reply(text, buttons=buttons)
     else:
         await main_bot.send_message(chat_id, text, buttons=buttons)
 
-# --- Ping Server ---
-async def ping_handler(request):
-    """Handles incoming HTTP requests for the ping service."""
-    return web.Response(text="I'm alive!")
+@main_bot.on(events.CallbackQuery)
+async def callback_handler(event):
+    data = event.data.decode('utf-8')
+    chat_id = event.chat_id
+    
+    if data == 'get_invite':
+        invite_code = str(uuid.uuid4())
+        user_data = get_user_data(chat_id)
+        user_data['invite_code'] = invite_code
+        save_user_data(chat_id, user_data)
+        
+        invite_link = f"https://t.me/YourBotUsername?start={invite_code}"
+        await event.edit(f'این لینک دعوت اختصاصی شماست:\n`{invite_link}`',
+                         buttons=[Button.inline('بازگشت', b'main_menu')])
+    
+    elif data == 'check_status':
+        user_data = get_user_data(chat_id)
+        status_text = "حساب شما فعال است." if is_user_active(chat_id) else "حساب شما غیرفعال است."
+        if user_data.get('is_permanent'):
+            status_text = "دسترسی شما دائمی است."
+        else:
+            end_time = user_data.get('trial_end_time')
+            if end_time:
+                remaining_time = end_time - time.time()
+                days = int(remaining_time // (24 * 3600))
+                hours = int((remaining_time % (24 * 3600)) // 3600)
+                status_text += f"\nزمان باقی‌مانده: {days} روز و {hours} ساعت"
+        
+        await event.edit(f'وضعیت حساب شما:\n{status_text}',
+                         buttons=[Button.inline('بازگشت', b'main_menu')])
+    
+    elif data == 'stop_clock':
+        user_data = get_user_data(chat_id)
+        user_data['is_permanent'] = False # This is a simple way to stop the loop
+        user_data['trial_end_time'] = time.time() # This will immediately stop the clock
+        save_user_data(chat_id, user_data)
+        await event.edit("ساعت پروفایل شما متوقف شد.", buttons=[Button.inline('بازگشت', b'main_menu')])
 
-async def run_ping_server():
-    """Runs a simple HTTP server to keep the service awake."""
-    app = web.Application()
-    app.router.add_get('/', ping_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', os.environ.get('PORT', 8080))
-    await site.start()
-    logging.info("Ping server started successfully!")
+    elif data == 'main_menu':
+        await event.edit('به منوی اصلی خوش آمدید.', buttons=[
+            [Button.inline('دریافت لینک دعوت', b'get_invite')],
+            [Button.inline('وضعیت حساب', b'check_status')],
+            [Button.inline('توقف ساعت', b'stop_clock')]
+        ])
 
-# --- Main Bot Running ---
+# --- Main function to run the bot ---
 async def main():
-    """Main function to run the bot and the ping server."""
-    # Start the bot client with the bot token. This avoids the interactive prompt.
     await main_bot.start(bot_token=BOT_TOKEN)
-    
-    # Start the ping server as a background task.
-    asyncio.create_task(run_ping_server())
-    
-    # Keep the bot running until it disconnects.
+    logging.info("Main bot started successfully!")
     await main_bot.run_until_disconnected()
 
 if __name__ == '__main__':

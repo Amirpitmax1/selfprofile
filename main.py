@@ -1,6 +1,6 @@
 # Telegram Userbot with Interactive Login and Ping Server
 import asyncio
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button, ReplyKeyboardRemove
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.auth import SignInRequest, SignUpRequest, SendCodeRequest
@@ -9,8 +9,6 @@ from telethon.tl.types import (
     ReplyKeyboardMarkup,
     MessageMediaContact
 )
-from telethon.tl.types import ReplyKeyboardRemove
-from telethon import Button
 import datetime
 import pytz
 import logging

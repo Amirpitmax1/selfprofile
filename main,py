@@ -1,124 +1,140 @@
-from pyrogram import Client, filters # اضافه کردن filters برای فیلتر کردن پیام‌ها
 import asyncio
+from pyrogram import Client, filters
+from pyrogram.errors import AuthKeyUnregistered, ConnectionError, FloodWait # ایمپورت کردن خطاهای مشخص تلگرام
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import random # وارد کردن ماژول random دیگر مورد نیاز نیست، اما فعلا نگه داشته شده است
 
-# NOTE: For security, it is highly recommended to use environment variables
-# instead of hardcoding sensitive data like API keys and phone numbers.
+# =======================================================
+# ⚠️ تنظیمات حساب کاربری (Account Configuration)
+# =======================================================
 
 # Your credentials
-api_id = 28190856
-api_hash = "6b9b5309c2a211b526c6ddad6eabb521"
-phone_number = "+989011243659"
+API_ID = 28190856
+API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
+PHONE_NUMBER = "+989011243659"
+SESSION_NAME = "my_account" 
 
-# Initialize the Pyrogram client.
-# The session name "my_account" will store your login details after the first run.
-app = Client("my_account", api_id=api_id, api_hash=api_hash, phone_number=phone_number)
+# متن پاسخ خودکار در غیاب شما
+AUTO_REPLY_MESSAGE = "سلام، آنلاین نیستم. پیام شما را دریافت کردم. در حال حاضر خارج از دسترس هستم، اما در اولین فرصت ممکن، پاسخ خواهم داد."
 
-# تعریف منطقه زمانی تهران با استفاده از ماژول استاندارد
+# تعریف منطقه زمانی تهران
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 
-# --- تنظیمات پاسخ خودکار (Auto-Reply) ---
-# فقط یک پیام ثابت برای ارسال در زمان آفلاین بودن
-# متن جدید مورد نظر شما
-AUTO_REPLY_TEXT = "سلام، آنلاین نیستم. پیام شما را دریافت کردم. در حال حاضر خارج از دسترس هستم، اما در اولین فرصت ممکن، پاسخ خواهم داد."
+# ساخت کلاینت Pyrogram
+app = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH, phone_number=PHONE_NUMBER)
 
+# =======================================================
+# بخش ۱: مدیریت فونت و ساعت زنده (Live Clock)
+# =======================================================
 
 def stylize_time(time_str: str) -> str:
     """
-    تبدیل ارقام ساعت به فونت شیک Math Monospace برای هماهنگی با اسم (قلم کوچک و خاص).
-    ارقام استفاده شده: 𝟶, 𝟷, 𝟸, 𝟹, 𝟺, 𝟻, 𝼆, 𝟽, 𝟾, 𝟿
+    تبدیل ارقام ساعت به فونت شیک Math Monospace.
     """
     conversion_map = {
         '0': '𝟶', '1': '𝟷', '2': '𝟸', '3': '𝟹', '4': '𝟺',
-        '5': '𝟻', '6': '𝼆', '7': '𝟽', '8': '𝟾', '9': '𝟿',
-        ':': ':' # کولون را استاندارد نگه می‌داریم
+        '5': '𝟻', '6': '𝼼', '7': '𝟽', '8': '𝟾', '9': '𝟿',
+        ':': ':'
     }
     return ''.join(conversion_map.get(char, char) for char in time_str)
 
 async def update_name():
     """
-    ساعت و دقیقه فعلی تهران را با همگام‌سازی دقیق به عنوان نام کاربر به‌روزرسانی می‌کند.
+    حلقه بی‌پایان برای به‌روزرسانی نام با ساعت زنده. بسیار مقاوم در برابر قطعی شبکه و خطاها.
     """
+    first_name = "𝓎𝑒 𝒶𝓂𝒾𝓇"
     
     while True:
-        # 1. گرفتن ساعت فعلی ایران از طریق ماژول استاندارد (ZoneInfo)
-        tehran_time = datetime.now(TEHRAN_TIMEZONE)
-        
-        # 2. فرمت جدید: نمایش فقط ساعت (HH:MM)
-        current_time_str = tehran_time.strftime("%H:%M")
-        
-        # 3. تبدیل به فونت شیک
-        stylized_time_str = stylize_time(current_time_str)
-        
-        # ترکیب: حذف تاریخ و خط جداکننده (فقط اسم و ساعت)
-        name_with_clock = f"𝓎𝑒 𝒶𝓂𝒾𝓇 {stylized_time_str}"
-        
         try:
-            # Update the profile (only the first_name is changed)
+            # --- منطق اصلی ---
+            tehran_time = datetime.now(TEHRAN_TIMEZONE)
+            current_time_str = tehran_time.strftime("%H:%M")
+            stylized_time_str = stylize_time(current_time_str)
+            name_with_clock = f"{first_name} {stylized_time_str}"
+            
+            # به‌روزرسانی نام
             await app.update_profile(first_name=name_with_clock)
-            # Log the time being set
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Updated name to: {name_with_clock}")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ Updated name to: {name_with_clock}")
+        
+        except FloodWait as e:
+            # اگر تلگرام بگوید صبر کن
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🛑 Rate Limit hit. Waiting for {e.value} seconds.")
+            await asyncio.sleep(e.value)
+            
+        except ConnectionError:
+            # خطای قطع اتصال شبکه
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️ Connection lost. Waiting 10 seconds before next attempt.")
+            # Pyrogram به صورت داخلی سعی در اتصال مجدد می کند، ما فقط مکث می کنیم.
+            await asyncio.sleep(10)
             
         except Exception as e:
-            # Handle potential rate limits or connection errors
-            print(f"Error updating name: {e}")
-            
-        # --- منطق همگام‌سازی (Synchronization Logic) برای رفع تاخیر یک دقیقه ---
-        # محاسبه دقیق ثانیه‌های باقی‌مانده تا شروع دقیقه بعدی
+            # مدیریت خطای عمومی (مثل Peer ID invalid یا هر چیز ناشناخته دیگر)
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ❌ Unhandled Error during name update. Attempting to recover: {e}")
+            # مکث 5 ثانیه ای و ادامه حلقه برای تلاش مجدد
+            await asyncio.sleep(5) 
+
+        # --- منطق همگام‌سازی (حتی در صورت خطا این بخش اجرا می‌شود) ---
         now = datetime.now()
-        # مقدار ثانیه‌های گذشته از دقیقه فعلی + کسری از ثانیه
         seconds_into_minute = now.second + now.microsecond / 1_000_000
-        # محاسبه زمانی که باید صبر کنیم تا دقیقه بعدی شروع شود
         sleep_seconds = 60 - seconds_into_minute
         
-        # حداقل زمان خواب 1 ثانیه، اگر اختلاف کمتر از 1 ثانیه بود، به دقیقه بعدی می‌رویم
         if sleep_seconds < 0.5:
-             sleep_seconds += 60 # اگر نزدیک به شروع دقیقه هستیم، تا دقیقه بعد صبر کن
+             sleep_seconds += 60
 
         await asyncio.sleep(sleep_seconds)
 
-# --- تابع جدید برای پاسخ خودکار ---
-# @app.on_message این دکوراتور تضمین می‌کند که این تابع به محض دریافت پیام اجرا می‌شود
-# filters.private() فیلتر می‌کند تا فقط پیام‌های خصوصی (PM) را شامل شود
-@app.on_message(filters.private & ~filters.me)
-async def auto_reply(_, message):
-    # بررسی کنید که آیا شما (سلف‌بات) آخرین پیام را در این چت ارسال نکرده‌اید.
-    # این کار از ارسال پاسخ‌های مکرر در یک چت جلوگیری می‌کند.
-    if not message.from_user.is_self:
-        # استفاده مستقیم از متن ثابت جدید
-        reply_text = AUTO_REPLY_TEXT
-        
-        try:
-            # ارسال پیام پاسخ به چتی که پیام از آن آمده است
-            await message.reply_text(reply_text)
-            print(f"Auto-reply sent to {message.chat.id}: {reply_text[:20]}...")
-            
-        except Exception as e:
-            print(f"Error sending auto-reply: {e}")
+# =======================================================
+# بخش ۲: پاسخ خودکار (Auto-Reply)
+# =======================================================
 
+@app.on_message(filters.private & ~filters.me)
+async def auto_reply(client: Client, message):
+    """
+    فقط به پیام‌های خصوصی (Private Messages) که از طرف خود کاربر نیستند، پاسخ می‌دهد.
+    """
+    try:
+        if message.from_user and not message.from_user.is_bot:
+            await message.reply_text(AUTO_REPLY_MESSAGE)
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 💬 SUCCESS: Auto-reply sent to {message.from_user.first_name} ({message.chat.id})")
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ❌ ERROR: Failed to send auto-reply to {message.chat.id}: {e}")
+
+# =======================================================
+# بخش ۳: تابع اصلی و اجرای همزمان (Concurrency)
+# =======================================================
 
 async def main():
-    """Starts the client and runs the name update loop."""
-    print("Starting Telegram Client...")
+    """Starts the client safely and runs the tasks."""
+    print("----------------------------------------------------------------------")
+    print(f"Starting Telegram Client for user: {PHONE_NUMBER}")
     
-    # اجرای client (لاگین)
-    await app.start()
-    print("Client running. Starting name update and auto-reply listeners.")
+    try:
+        # اتصال اولیه
+        await app.start()
+    except AuthKeyUnregistered:
+        print("🔴 FATAL ERROR: Authentication Key Unregistered. Please delete the 'my_account.session' file and restart the bot to re-authenticate.")
+        return
+    except ConnectionError:
+        print("🔴 FATAL ERROR: Initial connection failed. Check your internet connection and Telegram API settings.")
+        return
+    except Exception as e:
+        print(f"🔴 FATAL ERROR: Unhandled exception during startup: {e}")
+        return
+
+    # 2. اجرای حلقه به‌روزرسانی نام در پس‌زمینه
+    asyncio.create_task(update_name())
+    print("✅ Live Clock started as a background task.")
     
-    # اجرای تابع به‌روزرسانی نام در پس‌زمینه (Concurrent)
-    # توجه: on_message() به صورت خودکار توسط Pyrogram مدیریت می‌شود
-    await update_name()
+    # 3. نگه‌داشتن برنامه
+    print("👂 Auto-Reply listener is active and waiting for private messages...")
+    await asyncio.Event().wait()
     
-    # اگر update_name() کامل شد، client را متوقف کن
     await app.stop()
 
 if __name__ == "__main__":
     try:
-        # Pyrogram همه کارها را به صورت asynchronous مدیریت می‌کند
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nBot stopped by user.")
+        print("\n\nBot stopped by user (Ctrl+C). Goodbye!")
     except Exception as e:
-        print(f"An unexpected error occurred in main execution: {e}")
+        print(f"\n\nAn unexpected error occurred in main execution: {e}")

@@ -18,20 +18,35 @@ app = Client("my_account", api_id=api_id, api_hash=api_hash, phone_number=phone_
 # تعریف منطقه زمانی تهران با استفاده از ماژول استاندارد
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 
+def stylize_time(time_str: str) -> str:
+    """
+    تبدیل ارقام ساعت به فونت شیک Math Monospace برای هماهنگی با اسم.
+    ارقام استفاده شده: 𝟶, 𝟷, 𝟸, 𝟹, 𝟺, 𝟻, 𝟼, 𝟽, 𝟾, 𝟿
+    """
+    conversion_map = {
+        '0': '𝟶', '1': '𝟷', '2': '𝟸', '3': '𝟹', '4': '𝟺',
+        '5': '𝟻', '6': '𝟼', '7': '𝟽', '8': '𝟾', '9': '𝟿',
+        ':': ':' # کولون را استاندارد نگه می‌داریم
+    }
+    return ''.join(conversion_map.get(char, char) for char in time_str)
+
 async def update_name():
-    """Continuously updates the user's first name with the current date and time in Tehran."""
+    """
+    ساعت و دقیقه فعلی تهران را با همگام‌سازی دقیق به عنوان نام کاربر به‌روزرسانی می‌کند.
+    """
     
     while True:
         # 1. گرفتن ساعت فعلی ایران از طریق ماژول استاندارد (ZoneInfo)
-        # اگر ساعت اشتباه بود، ممکن است داده‌های منطقه زمانی سیستم میزبان به‌روز نباشد.
         tehran_time = datetime.now(TEHRAN_TIMEZONE)
         
-        # 2. فرمت جدید: نمایش روز (DD)، ماه (MM) و ساعت (HH:MM)
-        # مثال: 05.11 20:30
-        current_display = tehran_time.strftime("%d.%m %H:%M")
+        # 2. فرمت جدید: نمایش فقط ساعت (HH:MM)
+        current_time_str = tehran_time.strftime("%H:%M")
         
-        # Combine the fixed name part with the live clock and date
-        name_with_clock = f"𝓎𝑒 𝒶𝓂𝒾𝓇 | {current_display}" # نام طولانی‌تر برای نمایش تاریخ و ساعت
+        # 3. تبدیل به فونت شیک
+        stylized_time_str = stylize_time(current_time_str)
+        
+        # ترکیب: حذف تاریخ و خط جداکننده (فقط اسم و ساعت)
+        name_with_clock = f"𝓎𝑒 𝒶𝓂𝒾𝓇 {stylized_time_str}"
         
         try:
             # Update the profile (only the first_name is changed)
@@ -43,8 +58,19 @@ async def update_name():
             # Handle potential rate limits or connection errors
             print(f"Error updating name: {e}")
             
-        # Wait for 60 seconds before the next update to avoid hitting rate limits
-        await asyncio.sleep(60)
+        # --- منطق همگام‌سازی (Synchronization Logic) برای رفع تاخیر یک دقیقه ---
+        # محاسبه دقیق ثانیه‌های باقی‌مانده تا شروع دقیقه بعدی
+        now = datetime.now()
+        # مقدار ثانیه‌های گذشته از دقیقه فعلی + کسری از ثانیه
+        seconds_into_minute = now.second + now.microsecond / 1_000_000
+        # محاسبه زمانی که باید صبر کنیم تا دقیقه بعدی شروع شود
+        sleep_seconds = 60 - seconds_into_minute
+        
+        # حداقل زمان خواب 1 ثانیه، اگر اختلاف کمتر از 1 ثانیه بود، به دقیقه بعدی می‌رویم
+        if sleep_seconds < 0.5:
+             sleep_seconds += 60 # اگر نزدیک به شروع دقیقه هستیم، تا دقیقه بعد صبر کن
+
+        await asyncio.sleep(sleep_seconds)
 
 async def main():
     """Starts the client and runs the name update loop."""

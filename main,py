@@ -1,6 +1,6 @@
 import asyncio
 from pyrogram import Client, filters
-from pyrogram.errors import AuthKeyUnregistered, ConnectionError, FloodWait # ایمپورت کردن خطاهای مشخص تلگرام
+from pyrogram.errors import AuthKeyUnregistered, FloodWait # ConnectionError حذف شد
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -62,7 +62,7 @@ async def update_name():
             await asyncio.sleep(e.value)
             
         except ConnectionError:
-            # خطای قطع اتصال شبکه
+            # خطای قطع اتصال شبکه (از exception داخلی پایتون استفاده می‌شود)
             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️ Connection lost. Waiting 10 seconds before next attempt.")
             # Pyrogram به صورت داخلی سعی در اتصال مجدد می کند، ما فقط مکث می کنیم.
             await asyncio.sleep(10)
@@ -115,6 +115,7 @@ async def main():
         print("🔴 FATAL ERROR: Authentication Key Unregistered. Please delete the 'my_account.session' file and restart the bot to re-authenticate.")
         return
     except ConnectionError:
+        # خطای اتصال: در این بلوک از ConnectionError داخلی پایتون استفاده می شود
         print("🔴 FATAL ERROR: Initial connection failed. Check your internet connection and Telegram API settings.")
         return
     except Exception as e:

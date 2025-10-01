@@ -1,29 +1,68 @@
 from pyrogram import Client
 import asyncio
 from datetime import datetime
+from zoneinfo import ZoneInfo # ماژول استاندارد برای مدیریت مناطق زمانی
 
-# ======= اطلاعات اکانت خودت =======
+# NOTE: For security, it is highly recommended to use environment variables
+# instead of hardcoding sensitive data like API keys and phone numbers.
+
+# Your credentials
 api_id = 28190856
 api_hash = "6b9b5309c2a211b526c6ddad6eabb521"
 phone_number = "+989011243659"
 
-# ======= ایجاد کلاینت =======
+# Initialize the Pyrogram client.
+# The session name "my_account" will store your login details after the first run.
 app = Client("my_account", api_id=api_id, api_hash=api_hash, phone_number=phone_number)
 
+# تعریف منطقه زمانی تهران با استفاده از ماژول استاندارد
+TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
+
 async def update_name():
+    """Continuously updates the user's first name with the current date and time in Tehran."""
+    
     while True:
-        now = datetime.now()
-        current_time = now.strftime("%H:%M")
-        name_with_clock = f"𝓎𝑒 𝒶𝓂𝒾𝓇 {current_time}"  # اینجا اسم + ساعت
+        # 1. گرفتن ساعت فعلی ایران از طریق ماژول استاندارد (ZoneInfo)
+        # اگر ساعت اشتباه بود، ممکن است داده‌های منطقه زمانی سیستم میزبان به‌روز نباشد.
+        tehran_time = datetime.now(TEHRAN_TIMEZONE)
+        
+        # 2. فرمت جدید: نمایش روز (DD)، ماه (MM) و ساعت (HH:MM)
+        # مثال: 05.11 20:30
+        current_display = tehran_time.strftime("%d.%m %H:%M")
+        
+        # Combine the fixed name part with the live clock and date
+        name_with_clock = f"𝓎𝑒 𝒶𝓂𝒾𝓇 | {current_display}" # نام طولانی‌تر برای نمایش تاریخ و ساعت
+        
         try:
+            # Update the profile (only the first_name is changed)
             await app.update_profile(first_name=name_with_clock)
+            # Log the time being set
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Updated name to: {name_with_clock}")
+            
         except Exception as e:
-            print("Error:", e)
-        await asyncio.sleep(60)  # هر 60 ثانیه آپدیت می‌کند
+            # Handle potential rate limits or connection errors
+            print(f"Error updating name: {e}")
+            
+        # Wait for 60 seconds before the next update to avoid hitting rate limits
+        await asyncio.sleep(60)
 
 async def main():
+    """Starts the client and runs the name update loop."""
+    print("Starting Telegram Client...")
     await app.start()
-    print("Bot is running...")
+    print("Client running. Starting name update loop.")
+    
+    # Run the update function
     await update_name()
+    
+    # If the update_name loop somehow finishes (it shouldn't, due to 'while True'),
+    # the client should be stopped.
+    await app.stop()
 
-asyncio.run(main())
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nBot stopped by user.")
+    except Exception as e:
+        print(f"An unexpected error occurred in main execution: {e}")

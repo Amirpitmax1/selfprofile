@@ -1,20 +1,17 @@
 from pyrogram import Client
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo  # پایتون 3.9+
 
 api_id = 28190856
 api_hash = "6b9b5309c2a211b526c6ddad6eabb521"
 phone_number = "+989011243659"
 
-# تهران UTC+3:30
-TEHRAN_OFFSET = timedelta(hours=3, minutes=30)
-
 app = Client("my_account", api_id=api_id, api_hash=api_hash, phone_number=phone_number)
 
 async def update_name():
     while True:
-        now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-        tehran_time = now_utc + TEHRAN_OFFSET
+        tehran_time = datetime.now(ZoneInfo("Asia/Tehran"))
         current_time = tehran_time.strftime("%H:%M")
         name_with_clock = f"𝓎𝑒 𝒶𝓂𝒾𝓇 {current_time}"
         try:
@@ -22,9 +19,11 @@ async def update_name():
             print(f"Updated name to: {name_with_clock}")
         except Exception as e:
             print("Error:", e)
-        await asyncio.sleep(60)  # هر 60 ثانیه آپدیت کن
+        await asyncio.sleep(60)  # هر دقیقه آپدیت کن
 
 async def main():
     await app.start()
     print("Bot is running...")
-    awa
+    await update_name()
+
+asyncio.run(main())

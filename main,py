@@ -1,26 +1,25 @@
+import os
 import asyncio
-from datetime import datetime
 from pyrogram import Client
 
-api_id = 28190856  # جایگزین کن با API ID خودت
-api_hash = "6b9b5309c2a211b526c6ddad6eabb521"  # جایگزین کن با API Hash خودت
-phone_number = "+989011243659"  # شماره تلگرامت
-
-# فونت دلخواهت
-font_name = "𝓎𝑒 𝒶𝓂𝒾𝓇"
+# اگر میخوای مستقیم داخل کد باشه:
+api_id = 28190856
+api_hash = "6b9b5309c2a211b526c6ddad6eabb521"
+phone_number = "+989011243659"  # شماره‌ی خودت با +98
 
 app = Client("my_account", api_id=api_id, api_hash=api_hash, phone_number=phone_number)
 
 async def update_name():
     while True:
-        now = datetime.now().strftime("%H:%M")  # ساعت به صورت 24 ساعته
-        new_name = f"{font_name} {now}"
-        await app.update_profile(first_name=new_name)
-        await asyncio.sleep(60)  # هر 60 ثانیه آپدیت می‌کنه
+        from datetime import datetime
+        now = datetime.now().strftime("%H:%M")
+        name_with_time = f"𝓎𝑒 𝒶𝓂𝒾𝓇 {now}"
+        await app.update_profile(first_name=name_with_time)
+        await asyncio.sleep(60)  # هر 60 ثانیه آپدیت می‌شود
 
 async def main():
     await app.start()
     print("Bot is running...")
-    await update_name()  # شروع آپدیت اسم
+    await update_name()  # شروع به آپدیت ساعت می‌کند
 
 asyncio.run(main())

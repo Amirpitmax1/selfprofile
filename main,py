@@ -5,8 +5,9 @@ from pyrogram.errors import AuthKeyUnregistered, FloodWait, RPCError
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import logging
-from flask import Flask, request, redirect, url_for, render_template_string
+from flask import Flask, request, render_template_string
 import requests # برای مکانیزم ضد خواب
+from waitress import serve # برای اجرای ایمن Flask در سرورهای ابری
 
 # تنظیمات اولیه لاگینگ
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -16,9 +17,9 @@ logger = logging.getLogger(__name__)
 # ⚠️ تنظیمات حساب کاربری و حالت (Global State)
 # =======================================================
 
-# Your credentials (API ID and Hash are necessary for Pyrogram client initialization)
-API_ID = 28190856
-API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
+# توصیه می شود این مقادیر را به عنوان Secrets در Replit/Render تنظیم کنید.
+API_ID = int(os.environ.get("API_ID", 28190856))
+API_HASH = os.environ.get("API_HASH", "6b9b5309c2a211b526c6ddad6eabb521")
 SESSION_NAME = "my_account_web"
 
 # متن پاسخ خودکار در غیاب شما
@@ -29,7 +30,6 @@ TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 
 # متغیرهای حالت سراسری
 app_flask = Flask(__name__)
-# از app_client برای نگهداری نمونه فعال Pyrogram استفاده می شود
 app_client = None 
 bot_running_event = asyncio.Event()
 
@@ -50,7 +50,6 @@ async def update_name():
     """حلقه بی‌پایان برای به‌روزرسانی نام با ساعت زنده. بسیار مقاوم در برابر قطعی شبکه و خطاها."""
     first_name = "𝓎𝑒 𝒶𝓂𝒾𝓇"
     
-    # اطمینان از دسترسی به کلاینت فعال
     global app_client
     if app_client is None:
         logger.error("❌ update_name called but app_client is not initialized.")
@@ -94,8 +93,6 @@ async def update_name():
 # بخش ۲: پاسخ خودکار (Auto-Reply)
 # =======================================================
 
-# این دکوراتور باید بعد از مقداردهی اولیه app_client به آن متصل شود.
-# ما از یک متغیر جهانی برای این کار استفاده می کنیم.
 def register_handlers(client: Client):
     @client.on_message(filters.private & ~filters.me)
     async def auto_reply(client: Client, message):
@@ -108,22 +105,27 @@ def register_handlers(client: Client):
             logger.error(f"❌ Auto-Reply: Failed to send to {message.chat.id}: {e}")
 
 # =======================================================
-# بخش ۳: مکانیزم ضد خواب (Anti-Sleep for Render)
+# بخش ۳: مکانیزم ضد خواب (Anti-Sleep for Render/Replit)
 # =======================================================
 
-async def keep_alive(render_url: str):
+async def keep_alive(anti_sleep_url: str):
     """
     هر 5 دقیقه یک بار به آدرس URL خود پروژه درخواست می فرستد تا از خوابیدن سرور جلوگیری کند.
     """
-    logger.info(f"🔋 Anti-Sleep activated. Pinging URL: {render_url} every 5 minutes.")
+    if anti_sleep_url == "http://127.0.0.1:5000":
+        logger.warning("❌ ANTI-SLEEP WARNING: The URL is set to localhost. You MUST set the 'RENDER_EXTERNAL_URL' Secret in Replit with your public URL (e.g., https://selfprofile-3.amirpitmax3.repl.co) for 24/7 function.")
+    else:
+        logger.info(f"🔋 Anti-Sleep activated. Pinging URL: {anti_sleep_url} every 5 minutes.")
+
     while True:
         await asyncio.sleep(300) # 5 minutes
         try:
-            # استفاده از requests برای ارسال درخواست HTTP
-            requests.get(render_url, timeout=10)
-            logger.debug("✨ Keep Alive: Ping successful.")
+            if anti_sleep_url != "http://127.0.0.1:5000":
+                # از یک timeout کوتاه استفاده می کنیم تا منتظر پاسخ کامل نمانیم
+                requests.get(anti_sleep_url, timeout=10)
+                logger.debug("✨ Keep Alive: Ping successful.")
         except Exception as e:
-            logger.warning(f"❌ Keep Alive: Failed to ping URL {render_url}. Error: {e}")
+            logger.warning(f"❌ Keep Alive: Failed to ping URL {anti_sleep_url}. Error: {e}")
 
 # =======================================================
 # بخش ۴: رابط وب (Flask Web Interface)
@@ -150,15 +152,15 @@ WEB_FORM_HTML = """
         
         {% if status %}
             <div class="p-4 mb-6 rounded-lg font-medium text-center 
-            {% if status == 'فعال شد' %} bg-green-100 text-green-700 
-            {% elif status == 'منتظر' %} bg-yellow-100 text-yellow-700
+            {% if 'فعال شد' in status %} bg-green-100 text-green-700 
+            {% elif 'منتظر' in status %} bg-yellow-100 text-yellow-700
             {% else %} bg-red-100 text-red-700 
             {% endif %}">
                 وضعیت: {{ status }}
             </div>
         {% endif %}
 
-        <form method="POST" action="{{ url_for('activate') }}" class="space-y-4">
+        <form method="POST" action="/activate" class="space-y-4">
             <div>
                 <label for="session_string" class="block text-sm font-medium text-gray-700">Session String</label>
                 <textarea id="session_string" name="session_string" rows="3" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
@@ -170,7 +172,7 @@ WEB_FORM_HTML = """
         </form>
         
         <p class="text-xs text-gray-400 text-center mt-6">
-            <a href="https://t.me/ye_amir" target="_blank" class="hover:underline">نیاز به Session String دارید؟</a>
+            <a href="https://replit.com/@amirpitmax3/selfprofile-3" target="_blank" class="hover:underline">پروژه Replit شما</a>
         </p>
     </div>
 </body>
@@ -182,7 +184,7 @@ WEB_FORM_HTML = """
 def index():
     status = "منتظر ورود سشن"
     if bot_running_event.is_set():
-        status = "ربات فعال است و در حال به‌روزرسانی ساعت می‌باشد."
+        status = "ربات فعال شد و در حال به‌روزرسانی ساعت می‌باشد."
     return render_template_string(WEB_FORM_HTML, status=status)
 
 # مسیر فعال‌سازی (پس از سابمیت فرم)
@@ -193,18 +195,17 @@ def activate():
     if not session_string:
         return render_template_string(WEB_FORM_HTML, status="خطا: Session String نمی‌تواند خالی باشد."), 400
 
-    # اگر قبلاً ربات در حال اجراست، اول آن را متوقف کن
-    global app_client
-    if app_client is not None and bot_running_event.is_set():
-        # متوقف کردن سرویس قبلی (اختیاری اما توصیه می شود)
-        pass # در این معماری، Pyrogram در حال اجرا در یک Thread جداگانه است و نیازی به توقف اجباری نیست.
-
-    # شروع وظایف ربات در یک Thread جداگانه
-    # از آنجایی که Flask از Threading استفاده می کند، باید از یک executor برای اجرای وظایف asyncio استفاده کنیم
+    # اجرای وظایف ربات در حلقه Asyncio اصلی
     flask_loop = asyncio.get_event_loop()
+    # اگر قبلاً ربات اجرا شده باشد، ابتدا اتصال را قطع می‌کنیم.
+    if app_client and bot_running_event.is_set():
+        flask_loop.run_until_complete(app_client.stop())
+        bot_running_event.clear()
+        logger.info("Previous bot instance stopped.")
+
     flask_loop.create_task(start_bot_tasks(session_string))
     
-    return render_template_string(WEB_FORM_HTML, status="فعال شد! ساعت زنده و پاسخ خودکار در پس‌زمینه شروع به کار کردند."), 200
+    return render_template_string(WEB_FORM_HTML, status="فعال شد! ساعت زنده و پاسخ خودکار در پس‌زمینه شروع به کار کردند. لطفاً کنسول Replit را بررسی کنید."), 200
 
 # =======================================================
 # بخش ۵: اجرای هسته (Core Execution)
@@ -220,7 +221,7 @@ async def start_bot_tasks(session_string):
             name=SESSION_NAME, 
             api_id=API_ID, 
             api_hash=API_HASH, 
-            session_string=session_string
+            session_string=session_string 
         )
         logger.info("Initializing Pyrogram Client...")
 
@@ -245,32 +246,21 @@ async def start_bot_tasks(session_string):
     asyncio.create_task(update_name())
     logger.info("✅ Live Clock started as a background task.")
 
-    # Anti-Sleep (فقط اگر در محیط Render یا مشابه هستیم)
-    render_url = os.environ.get('RENDER_EXTERNAL_URL') or "http://127.0.0.1:5000"
-    asyncio.create_task(keep_alive(render_url))
-    logger.info("✅ Anti-Sleep task initiated.")
+    # Anti-Sleep: استفاده از متغیر محیطی که آدرس عمومی پروژه را نگه می‌دارد.
+    anti_sleep_url = os.environ.get('RENDER_EXTERNAL_URL') or "http://127.0.0.1:5000"
+    asyncio.create_task(keep_alive(anti_sleep_url))
 
     bot_running_event.set() # تنظیم فلگ برای نشان دادن اجرای ربات
-    
-    # اینجا نیازی به await Event().wait() نیست چون Flask پروسه اصلی را نگه می دارد.
 
 
 def run_pyrogram_and_flask():
     """شروع وظایف Pyrogram و Flask در حلقه async واحد."""
-    # Render پورت را به عنوان متغیر محیطی PORT ارسال می کند
     port = int(os.environ.get("PORT", 5000))
-    host = '0.0.0.0' # برای رندر ضروری است
+    host = '0.0.0.0' 
     
-    # از سرویس های Flask برای اجرای در حلقه asyncio استفاده می کنیم.
-    # به جای app_flask.run() که مسدود کننده است، از ابزار کمکی استفاده می کنیم.
-    from waitress import serve
     logger.info(f"🌐 Flask Web Server starting on {host}:{port}")
 
-    # از آنجایی که Pyrogram و Flask هر دو در حال اجرا هستند، از یک Executor برای Flask استفاده می کنیم
-    # این تابع Flask را در یک Thread جداگانه اجرا می کند و اجازه می دهد asyncio کار کند.
-    # توجه: در محیط رندر نیاز به Waitress یا Gunicorn دارید، ما از Waitress برای شبیه‌سازی استفاده می‌کنیم.
-    
-    # Start the Flask server using a thread pool executor, allowing the asyncio loop to run
+    # از تابع serve کتابخانه Waitress برای اجرای Flask در یک Thread جداگانه استفاده می کنیم
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, serve, app_flask, host=host, port=port)
     
@@ -279,15 +269,16 @@ def run_pyrogram_and_flask():
     except KeyboardInterrupt:
         logger.info("\nServer and Bot stopped by user (Ctrl+C).")
     finally:
+        # کلاینت فقط در صورت وجود و فعال بودن متوقف می شود
         if app_client:
             loop.run_until_complete(app_client.stop())
         logger.info("Cleanup complete. Goodbye!")
 
 if __name__ == "__main__":
-    # اگر در محیط لوکال اجرا می کنید، به طور خودکار لاگین کنید (اگر فایل سشن وجود دارد)
+    # اگر فایل سشن وجود داشته باشد، به صورت خودکار سعی در لاگین می‌کند (برای محیط‌های لوکال)
     if os.path.exists(f"{SESSION_NAME}.session"):
         logger.info("Session file found. Attempting to start the bot automatically...")
-        asyncio.run(start_bot_tasks(None)) # با None می تواند سشن را از فایل بخواند
+        asyncio.run(start_bot_tasks(None)) 
         
     # حالا Flask و Pyrogram را همزمان اجرا کن
     run_pyrogram_and_flask()

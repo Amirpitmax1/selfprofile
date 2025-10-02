@@ -1,78 +1,157 @@
-from pyrogram import Client
 import asyncio
+from pyrogram import Client, filters
+from pyrogram.errors import AuthKeyUnregistered, FloodWait
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from flask import Flask
 from threading import Thread
 
-# ─── اطلاعات اکانت ───
-api_id = 28190856
-api_hash = "6b9b5309c2a211b526c6ddad6eabb521"
-phone_number = "+989011243659"
+# =======================================================
+# بخش ۰: وب سرور برای روشن نگه‌داشتن ربات در Repl.it
+# =======================================================
 
-# ─── کلاینت تلگرام ───
-app = Client("my_account", api_id=api_id, api_hash=api_hash, phone_number=phone_number)
-
-# ─── منطقه زمانی ایران ───
-TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
-
-# ─── وب‌سرور ساده برای پینگ ───
+# یک وب سرور ساده با Flask ایجاد می‌کنیم
+# این سرور باعث می‌شود Repl.it فکر کند که برنامه شما همیشه فعال است
 app_flask = Flask('')
 
 @app_flask.route('/')
 def home():
-    return "Self Bot is running with clock ⏰"
+    # هر متنی اینجا باشد کافی است
+    return "I am alive!"
 
-def run():
-    app_flask.run(host='0.0.0.0', port=8080)
+def run_flask():
+  # سرور را روی هاست و پورت استاندارد Repl.it اجرا می‌کند
+  app_flask.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-    t = Thread(target=run)
+    # سرور را در یک ترد (thread) جداگانه اجرا می‌کند تا با ربات تداخل نداشته باشد
+    t = Thread(target=run_flask)
     t.start()
 
-# ─── تبدیل ارقام به فونت خاص ───
+# =======================================================
+# ⚠️ تنظیمات حساب کاربری (Account Configuration)
+# =======================================================
+
+# Your credentials
+API_ID = 28190856
+API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"
+PHONE_NUMBER = "+989011243659"
+SESSION_NAME = "my_account"
+
+# متن پاسخ خودکار در غیاب شما
+AUTO_REPLY_MESSAGE = "سلام، آنلاین نیستم. پیام شما را دریافت کردم. در حال حاضر خارج از دسترس هستم، اما در اولین فرصت ممکن، پاسخ خواهم داد."
+
+# تعریف منطقه زمانی تهران
+TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
+
+# ساخت کلاینت Pyrogram
+app = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH, phone_number=PHONE_NUMBER)
+
+# =======================================================
+# بخش ۱: مدیریت فونت و ساعت زنده (Live Clock)
+# =======================================================
+
 def stylize_time(time_str: str) -> str:
+    """
+    تبدیل ارقام ساعت به فونت شیک Math Monospace.
+    """
     conversion_map = {
         '0': '𝟶', '1': '𝟷', '2': '𝟸', '3': '𝟹', '4': '𝟺',
-        '5': '𝟻', '6': '𝟼', '7': '𝟽', '8': '𝟾', '9': '𝟿',
+        '5': '𝟻', '6': '𝼼', '7': '𝟽', '8': '𝟾', '9': '𝟿',
         ':': ':'
     }
     return ''.join(conversion_map.get(char, char) for char in time_str)
 
-# ─── آپدیت اسم با ساعت ───
 async def update_name():
+    """
+    حلقه بی‌پایان برای به‌روزرسانی نام با ساعت زنده. بسیار مقاوم در برابر قطعی شبکه و خطاها.
+    """
+    first_name = "𝓎𝑒 𝒶𝓂𝒾𝓇"
+    
     while True:
-        tehran_time = datetime.now(TEHRAN_TIMEZONE)
-        current_time_str = tehran_time.strftime("%H:%M")
-        stylized_time_str = stylize_time(current_time_str)
-        name_with_clock = f"𝓎𝑒 𝒶𝓂𝒾𝓇 {stylized_time_str}"
-
         try:
+            # --- منطق اصلی ---
+            tehran_time = datetime.now(TEHRAN_TIMEZONE)
+            current_time_str = tehran_time.strftime("%H:%M")
+            stylized_time_str = stylize_time(current_time_str)
+            name_with_clock = f"{first_name} {stylized_time_str}"
+            
+            # به‌روزرسانی نام
             await app.update_profile(first_name=name_with_clock)
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Updated name to: {name_with_clock}")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ Updated name to: {name_with_clock}")
+        
+        except FloodWait as e:
+            # اگر تلگرام بگوید صبر کن
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🛑 Rate Limit hit. Waiting for {e.value} seconds.")
+            await asyncio.sleep(e.value)
+            
+        except ConnectionError:
+            # خطای قطع اتصال شبکه (از exception داخلی پایتون استفاده می‌شود)
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️ Connection lost. Waiting 10 seconds before next attempt.")
+            await asyncio.sleep(10)
+            
         except Exception as e:
-            print(f"Error updating name: {e}")
+            # مدیریت خطای عمومی
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ❌ Unhandled Error during name update: {e}")
+            await asyncio.sleep(5)
 
+        # --- منطق همگام‌سازی ---
         now = datetime.now()
-        seconds_into_minute = now.second + now.microsecond / 1_000_000
-        sleep_seconds = 60 - seconds_into_minute
-        if sleep_seconds < 0.5:
-            sleep_seconds += 60
+        # منتظر می‌مانیم تا دقیقه بعدی شروع شود
+        sleep_seconds = 60 - now.second
         await asyncio.sleep(sleep_seconds)
 
-# ─── اجرای اصلی ───
+# =======================================================
+# بخش ۲: پاسخ خودکار (Auto-Reply)
+# =======================================================
+
+@app.on_message(filters.private & ~filters.me)
+async def auto_reply(client: Client, message):
+    """
+    فقط به پیام‌های خصوصی (Private Messages) که از طرف خود کاربر نیستند، پاسخ می‌دهد.
+    کد این بخش کاملا درست بود و مشکلی نداشت. احتمالا چون ربات شما خاموش می‌شد، کار نمی‌کرد.
+    """
+    try:
+        if message.from_user and not message.from_user.is_bot:
+            await message.reply_text(AUTO_REPLY_MESSAGE)
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 💬 SUCCESS: Auto-reply sent to {message.from_user.first_name} ({message.chat.id})")
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ❌ ERROR: Failed to send auto-reply to {message.chat.id}: {e}")
+
+# =======================================================
+# بخش ۳: تابع اصلی و اجرای همزمان (Concurrency)
+# =======================================================
+
 async def main():
-    print("Starting Telegram Client...")
-    await app.start()
-    print("Client running. Starting name update loop.")
-    await update_name()
+    """Starts the client safely and runs the tasks."""
+    # ۱. وب‌سرور را برای روشن نگه‌داشتن ربات اجرا کن
+    keep_alive()
+    print("✅ Keep-alive web server started.")
+    print("----------------------------------------------------------------------")
+    print(f"Starting Telegram Client for user: {PHONE_NUMBER}")
+    
+    try:
+        # ۲. اتصال به تلگرام
+        await app.start()
+    except AuthKeyUnregistered:
+        print("🔴 FATAL ERROR: Authentication Key Unregistered. Please delete the 'my_account.session' file and restart.")
+        return
+    except Exception as e:
+        print(f"🔴 FATAL ERROR: Unhandled exception during startup: {e}")
+        return
+
+    # ۳. اجرای حلقه به‌روزرسانی نام در پس‌زمینه
+    asyncio.create_task(update_name())
+    print("✅ Live Clock started as a background task.")
+    
+    # ۴. نگه‌داشتن برنامه برای گوش دادن به پیام‌ها
+    print("👂 Auto-Reply listener is active and waiting for private messages...")
+    await asyncio.Event().wait()
+    
     await app.stop()
 
 if __name__ == "__main__":
-    keep_alive()  # این خط نذاره پروژه خاموش شه
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nBot stopped by user.")
-    except Exception as e:
-        print(f"An unexpected error occurred in main execution: {e}")
+        print("\n\nBot stopped by user (Ctrl+C). Goodbye!")

@@ -22,6 +22,13 @@ API_ID = int(os.environ.get("API_ID", 28190856))
 API_HASH = os.environ.get("API_HASH", "6b9b5309c2a211b526c6ddad6eabb521")
 SESSION_NAME = "my_account_web"
 
+# NEW: از شماره تلفن و پسورد (اختیاری) در Secrets برای لاگین اولیه استفاده کنید.
+# شماره تلفن شما به عنوان مقدار پیش‌فرض در کد قرار داده شد.
+PHONE_NUMBER = os.environ.get("PHONE_NUMBER", "+989011243659")
+# رمز دومرحله‌ای شما به صورت مستقیم در کد قرار داده شد. (توصیه: برای امنیت بیشتر، آن را در Secrets بگذارید)
+BOT_PASSWORD = os.environ.get("BOT_PASSWORD", "Amirpitmax$1388$")
+
+
 # متن پاسخ خودکار در غیاب شما
 AUTO_REPLY_MESSAGE = "سلام، آنلاین نیستم. پیام شما را دریافت کردم. در حال حاضر خارج از دسترس هستم، اما در اولین فرصت ممکن، پاسخ خواهم داد."
 
@@ -40,7 +47,6 @@ bot_running_event = asyncio.Event()
 def stylize_time(time_str: str) -> str:
     """
     تبدیل ارقام ساعت به فونت شیک Fullwidth (تمام عرض) برای سازگاری بیشتر با دستگاه‌ها.
-    این فونت‌ها معمولاً در تلگرام به شکل یکنواخت‌تر و زیباتری نمایش داده می‌شوند.
     """
     conversion_map = {
         '0': '０', '1': '１', '2': '２', '3': '３', '4': '４',
@@ -134,14 +140,14 @@ async def keep_alive(anti_sleep_url: str):
 # بخش ۴: رابط وب (Flask Web Interface)
 # =======================================================
 
-# قالب HTML ساده و زیبا با Tailwind CSS برای فرم ورود
+# قالب HTML ساده و زیبا برای نمایش وضعیت و راهنمای لاگین با شماره تلفن
 WEB_FORM_HTML = """
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>فعال‌سازی سلف‌بات Clock</title>
+    <title>وضعیت سلف‌بات Clock</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap');
@@ -150,8 +156,8 @@ WEB_FORM_HTML = """
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
     <div class="max-w-md w-full bg-white p-8 rounded-xl shadow-2xl border border-blue-200">
-        <h1 class="text-3xl font-bold text-center text-blue-700 mb-6">⏰ فعال‌سازی ربات ساعت زنده</h1>
-        <p class="text-gray-600 text-center mb-8">لطفاً Session String معتبر خود را وارد کنید تا ربات فعال شود. این اطلاعات هرگز ذخیره نمی‌شوند.</p>
+        <h1 class="text-3xl font-bold text-center text-blue-700 mb-6">⏰ وضعیت ربات ساعت زنده</h1>
+        <p class="text-gray-600 text-center mb-4">این صفحه برای فعال نگه داشتن ربات در Replit لازم است.</p>
         
         {% if status %}
             <div class="p-4 mb-6 rounded-lg font-medium text-center 
@@ -163,16 +169,15 @@ WEB_FORM_HTML = """
             </div>
         {% endif %}
 
-        <form method="POST" action="/activate" class="space-y-4">
-            <div>
-                <label for="session_string" class="block text-sm font-medium text-gray-700">Session String</label>
-                <textarea id="session_string" name="session_string" rows="3" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
-            </div>
-            
-            <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-150 ease-in-out">
-                فعال‌سازی و شروع ربات
-            </button>
-        </form>
+        <div class="text-sm p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <h2 class="font-bold text-yellow-800 mb-2">نحوه لاگین با شماره تلفن:</h2>
+            <ol class="list-decimal list-inside text-yellow-700 space-y-1">
+                <li>ربات را در Replit **اجرا (Run)** کنید.</li>
+                <li>در **کنسول (Console)** ریپلیت، شماره تلفن (با کد کشور) و سپس کد تایید تلگرام را وارد کنید.</li>
+                <li>پس از ورود موفقیت‌آمیز، فایل سشن ذخیره می‌شود و ربات شروع به کار می‌کند.</li>
+            </ol>
+            <p class="mt-3 font-semibold text-yellow-800">⚠️ برای اجرای ۲۴ ساعته، Session String به محیط وبسایت نیاز نیست، اما حتماً متغیر `RENDER_EXTERNAL_URL` را در Secrets ریپلیت با آدرس عمومی پروژه پر کنید.</p>
+        </div>
         
         <p class="text-xs text-gray-400 text-center mt-6">
             <a href="https://replit.com/@amirpitmax3/selfprofile-3" target="_blank" class="hover:underline">پروژه Replit شما</a>
@@ -185,59 +190,50 @@ WEB_FORM_HTML = """
 # مسیر اصلی وب‌سایت
 @app_flask.route('/', methods=['GET'])
 def index():
-    status = "منتظر ورود سشن"
+    status = "ربات هنوز شروع نشده است (چک کردن کنسول برای لاگین)."
     if bot_running_event.is_set():
-        status = "ربات فعال شد و در حال به‌روزرسانی ساعت می‌باشد."
+        status = "فعال شد! ساعت زنده و پاسخ خودکار در حال اجرا هستند. (لاگین موفق)"
+    elif app_client and not bot_running_event.is_set():
+        status = "منتظر... در حال تلاش برای اتصال/لاگین در کنسول."
+        
     return render_template_string(WEB_FORM_HTML, status=status)
-
-# مسیر فعال‌سازی (پس از سابمیت فرم)
-@app_flask.route('/activate', methods=['POST'])
-def activate():
-    session_string = request.form.get('session_string', '').strip()
-    
-    if not session_string:
-        return render_template_string(WEB_FORM_HTML, status="خطا: Session String نمی‌تواند خالی باشد."), 400
-
-    # اجرای وظایف ربات در حلقه Asyncio اصلی
-    flask_loop = asyncio.get_event_loop()
-    # اگر قبلاً ربات اجرا شده باشد، ابتدا اتصال را قطع می‌کنیم.
-    if app_client and bot_running_event.is_set():
-        flask_loop.run_until_complete(app_client.stop())
-        bot_running_event.clear()
-        logger.info("Previous bot instance stopped.")
-
-    flask_loop.create_task(start_bot_tasks(session_string))
-    
-    return render_template_string(WEB_FORM_HTML, status="فعال شد! ساعت زنده و پاسخ خودکار در پس‌زمینه شروع به کار کردند. لطفاً کنسول Replit را بررسی کنید."), 200
 
 # =======================================================
 # بخش ۵: اجرای هسته (Core Execution)
 # =======================================================
 
-async def start_bot_tasks(session_string):
-    """ربات Pyrogram را با Session String جدید مقداردهی اولیه و وظایف را شروع می کند."""
+async def start_pyrogram_client():
+    """
+    ربات Pyrogram را شروع می کند. اگر فایل سشن وجود نداشته باشد، به طور خودکار
+    در کنسول منتظر ورود شماره تلفن، کد تایید و پسورد (در صورت وجود 2FA) می ماند.
+    """
     global app_client
     
-    # 1. مقداردهی اولیه کلاینت با سشن استرینگ جدید
+    # 1. مقداردهی اولیه کلاینت
     try:
         app_client = Client(
             name=SESSION_NAME, 
             api_id=API_ID, 
-            api_hash=API_HASH, 
-            session_string=session_string 
+            api_hash=API_HASH,
+            # استفاده از پارامترهای جدید برای لاگین با شماره تلفن
+            phone_number=PHONE_NUMBER,
+            password=BOT_PASSWORD,
+            in_memory=False # مطمئن می شویم که سشن در فایل ذخیره شود
         )
         logger.info("Initializing Pyrogram Client...")
 
-        # 2. اتصال
+        # 2. اتصال و لاگین (در صورت نیاز به صورت تعاملی در کنسول)
+        logger.info(f"Connecting to Telegram with phone number: {PHONE_NUMBER}. If the session file is missing, Pyrogram will prompt for OTP and Password in the Replit Console.")
         await app_client.start()
-        logger.info("✅ Client successfully connected and authenticated!")
+        logger.info("✅ Client successfully connected and authenticated! Session file saved.")
         
     except AuthKeyUnregistered:
-        logger.critical("🔴 FATAL ERROR: Invalid or expired Session String. Please check your session and try again.")
+        logger.critical("🔴 FATAL ERROR: Invalid credentials or session. Please check PHONE_NUMBER and BOT_PASSWORD.")
         app_client = None
         return
     except Exception as e:
-        logger.critical(f"🔴 FATAL ERROR during client start: {e}")
+        # این خطا شامل درخواست‌های تعاملی Pyrogram برای OTP/Password در کنسول خواهد بود
+        logger.critical(f"🔴 FATAL ERROR during client start (Please check Replit Console for interactive login prompts): {e}")
         app_client = None
         return
 
@@ -261,12 +257,18 @@ def run_pyrogram_and_flask():
     port = int(os.environ.get("PORT", 5000))
     host = '0.0.0.0' 
     
-    logger.info(f"🌐 Flask Web Server starting on {host}:{port}")
-
-    # از تابع serve کتابخانه Waitress برای اجرای Flask در یک Thread جداگانه استفاده می کنیم
+    # Pyrogram client must be started first to allow interactive login in the console
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, serve, app_flask, host=host, port=port)
+    loop.run_until_complete(start_pyrogram_client())
     
+    # Only start the web server if Pyrogram client successfully started
+    if app_client:
+        logger.info(f"🌐 Flask Web Server starting on {host}:{port}")
+        # از تابع serve کتابخانه Waitress برای اجرای Flask در یک Thread جداگانه استفاده می کنیم
+        loop.run_in_executor(None, serve, app_flask, host=host, port=port)
+    else:
+         logger.critical("Web server not started because Pyrogram client failed to initialize or connect.")
+        
     try:
         loop.run_forever()
     except KeyboardInterrupt:
@@ -278,10 +280,5 @@ def run_pyrogram_and_flask():
         logger.info("Cleanup complete. Goodbye!")
 
 if __name__ == "__main__":
-    # اگر فایل سشن وجود داشته باشد، به صورت خودکار سعی در لاگین می‌کند (برای محیط‌های لوکال)
-    if os.path.exists(f"{SESSION_NAME}.session"):
-        logger.info("Session file found. Attempting to start the bot automatically...")
-        asyncio.run(start_bot_tasks(None)) 
-        
-    # حالا Flask و Pyrogram را همزمان اجرا کن
+    # اجرای Pyrogram (برای لاگین) و Flask (برای Keep-Alive)
     run_pyrogram_and_flask()

@@ -1,4 +1,5 @@
-telethon
-aiohttp
-redis
-pytz
+pyrogram
+Flask
+requests
+waitress
+python-telegram-core

@@ -21,15 +21,14 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(
 # =======================================================
 # ⚠️ تنظیمات اصلی از متغیرهای محیطی خوانده می‌شود
 # =======================================================
-# ⭐️ اصلاح شد: باید نام متغیر محیطی را به تابع get بدهید، نه مقدار آن را
+# API_ID و API_HASH از متغیرهای محیطی خوانده می‌شوند
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 
 # بررسی متغیرهای حیاتی
 if not API_ID or not API_HASH:
-    logging.critical("CRITICAL ERROR: API_ID or API_HASH environment variables are not set!")
-    # این بخش فقط برای تست محلی است و در محیط Render نباید فعال شود
-    # مقادیر جدید API ID و API HASH شما در زیر جایگزین شدند.
+    logging.critical("CRITICAL ERROR: API_ID or API_HASH environment variables are not set! Using default test values.")
+    # مقادیر پیش‌فرض برای تست (در محیط واقعی باید از متغیرهای محیطی استفاده شود)
     API_ID = os.environ.get("API_ID", "24218762")
     API_HASH = os.environ.get("API_HASH", "19695584ae95ea9bc5e1483e15b486a7")
 
@@ -37,7 +36,7 @@ if not API_ID or not API_HASH:
 CLOCK_FONTS = {
     "1": {"name": "Style 1 (Fullwidth)", "from": '0123456789:', "to": '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟵:'},
     "2": {"name": "Style 2 (Circled)", "from": '0123456789:', "to": '⓪①②③④⑤⑥⑦⑧⑨:'},
-    # 🌟 اصلاح شد: کاراکترهای Double Struck صحیح برای نمایش بهتر
+    # کاراکترهای Double Struck
     "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
     "4": {"name": "Style 4 (Monospace)", "from": '0123456789:', "to": '０１２３４５６７８９:'},
 }
@@ -216,7 +215,8 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
     except PhoneCodeExpired: 
         await client.disconnect()
         logging.error("PhoneCodeExpired: The user took too long to enter the code or the key/hash is restricted.")
-        return {"success": False, "error": "کد تایید منقضی شده است. کدهای تلگرام سریعاً منقضی می‌شوند. لطفاً برگردید و دوباره تلاش کنید."}
+        # پیام خطا را کمی دقیق‌تر می‌کنیم تا کاربر بداند باید فرآیند را از نو شروع کند.
+        return {"success": False, "error": "کد تایید منقضی شده است. زمان وارد کردن کد تمام شده. لطفاً **تغییر شماره یا تلاش مجدد** را انتخاب کنید تا یک کد جدید دریافت شود."}
         
     except PasswordHashInvalid:
         await client.disconnect()
@@ -317,6 +317,12 @@ def submit_code():
         session['login_step'] = 'PASSWORD'
     else:
         session['error_message'] = result.get('error')
+        
+        # 💡 مدیریت خطای انقضای کد: فرآیند را کاملا ریست می‌کنیم.
+        if "کد تایید منقضی شده است." in result.get('error', ''):
+             # پاک کردن session و شروع مجدد برای دریافت hash جدید
+             return redirect(url_for('reset')) 
+             
         session['login_step'] = 'CODE' # اجازه تلاش مجدد برای وارد کردن کد
 
     return redirect(url_for('home'))

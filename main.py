@@ -159,6 +159,18 @@ def run_async_in_sync(coroutine):
         logging.error(f"Async execution failed: {type(e).__name__} - {e}", exc_info=True) 
         return {"success": False, "error": f"Internal System Error: {type(e).__name__}."}
 
+# 🌟 NEW UTILITY: Function to ensure the temporary Pyrogram session file is removed
+def cleanup_session_file(phone_number):
+    """Removes the temporary pyrogram session file associated with the phone number."""
+    session_file = f"{phone_number}.session"
+    if os.path.exists(session_file):
+        try:
+            os.remove(session_file)
+            logging.info(f"Cleaned up session file: {session_file}")
+        except Exception as e:
+            # We log the error but don't fail the whole request
+            logging.error(f"Failed to remove session file {session_file}: {type(e).__name__} - {e}")
+
 
 # =======================================================
 # PYROGRAM ASYNC CORE FUNCTIONS
@@ -167,7 +179,7 @@ def run_async_in_sync(coroutine):
 async def send_verification_code(phone_number: str):
     """Creates a temporary client and sends the verification code."""
     session_file = f"{phone_number}.session"
-    # REMOVED in_memory=True to persist session state on disk
+    # Pyrogram client will now manage the session file on disk
     client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH) 
     
     try:
@@ -178,22 +190,21 @@ async def send_verification_code(phone_number: str):
     
     except PhoneNumberInvalid as e:
         await client.disconnect()
-        if os.path.exists(session_file): os.remove(session_file) # Cleanup on failure
+        cleanup_session_file(phone_number) # Cleanup on failure
         return {"success": False, "error": "شماره تلفن وارد شده نامعتبر است. لطفاً با کد کشور (مثال: +98...) وارد کنید."}
     except FloodWait as e:
         await client.disconnect()
-        if os.path.exists(session_file): os.remove(session_file) # Cleanup on failure
+        cleanup_session_file(phone_number) # Cleanup on failure
         return {"success": False, "error": f"تلگرام شما را موقتاً محدود کرده است. لطفاً {e.value} ثانیه دیگر تلاش کنید."}
     except Exception as e:
         await client.disconnect()
-        if os.path.exists(session_file): os.remove(session_file) # Cleanup on failure
+        cleanup_session_file(phone_number) # Cleanup on failure
         # The ApiIdInvalid error (if still present) will be caught here
         return {"success": False, "error": f"خطای ارسال کد: {type(e).__name__}."}
 
 
 async def sign_in_and_get_session(phone_number: str, phone_code_hash: str, code: str, password: str = None):
     """Logs in with code and/or password and returns the Session String."""
-    session_file = f"{phone_number}.session"
     # Client will load temporary auth key from the session file
     client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH)
     
@@ -217,8 +228,7 @@ async def sign_in_and_get_session(phone_number: str, phone_code_hash: str, code:
         await client.disconnect()
         
         # FINAL CLEANUP: Remove the temporary session file
-        if os.path.exists(session_file):
-            os.remove(session_file)
+        cleanup_session_file(phone_number)
             
         return {"success": True, "session_string": session_string}
 
@@ -233,13 +243,13 @@ async def sign_in_and_get_session(phone_number: str, phone_code_hash: str, code:
     except PhoneCodeExpired:
         await client.disconnect()
         # Cleanup on expired code, forcing a full start
-        if os.path.exists(session_file): os.remove(session_file)
+        cleanup_session_file(phone_number)
         # This error triggers a full reset in the Flask route
         return {"success": False, "error": "کد تایید منقضی شده است. باید از ابتدا شروع کنید."}
     except Exception as e:
         await client.disconnect()
         # Cleanup on generic errors
-        if os.path.exists(session_file): os.remove(session_file)
+        cleanup_session_file(phone_number)
         return {"success": False, "error": f"خطای نامشخص در ورود: {type(e).__name__}"}
 
 # =======================================================
@@ -275,6 +285,9 @@ def start_login():
     session['phone_number'] = phone
     session['font_key'] = font_key
     
+    # 🌟 NEW: Ensure the temporary Pyrogram session file is removed before starting the process
+    cleanup_session_file(phone)
+
     result = run_async_in_sync(send_verification_code(phone))
 
     if result["success"]:
@@ -355,7 +368,14 @@ def submit_password():
 @app_flask.route('/reset')
 def reset():
     """Clears the user session and returns to the start page."""
+    # Get phone before clearing session to clean up the Pyrogram session file
+    phone = session.get('phone_number')
     session.clear()
+    
+    # 🌟 NEW: Clean up the Pyrogram session file associated with the phone number
+    if phone:
+        cleanup_session_file(phone)
+        
     session['error_message'] = "فرآیند ورود ریست شد. لطفاً دوباره تلاش کنید."
     return redirect(url_for('home'))
 

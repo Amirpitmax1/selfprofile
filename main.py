@@ -4,7 +4,7 @@ import logging
 from pyrogram import Client
 from pyrogram.errors import (
     FloodWait, SessionPasswordNeeded, PhoneCodeInvalid,
-    PasswordHashInvalid, PhoneNumberInvalid, PhoneCodeExpired, ApiIdInvalid
+    PasswordHashInvalid, PhoneNumberInvalid, PhoneCodeExpired, ApiIdInvalid, UserDeactivated, AuthKeyUnregistered
 )
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -33,26 +33,72 @@ FONT_STYLES = {
     "monospace":{'0':'𝟶','1':'𝟷','2':'𝟸','3':'𝟹','4':'𝟺','5':'𝟻','6':'𝟼','7':'𝟽','8':'𝟾','9':'𝟿',':':':'},
     "normal":   {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
 }
+ALL_DIGITS = "".join(set("".join(d.values() for d in FONT_STYLES.values())))
 
 EVENT_LOOP = asyncio.new_event_loop()
-ACTIVE_CLIENTS = {}
+ACTIVE_CLIENTS = {} # برای مدیریت کلاینت‌ها در حین ورود
+ACTIVE_BOTS = {} # برای نگهداری ربات‌های فعال
 
-# --- توابع کمکی ---
+# --- توابع اصلی ربات ---
 def stylize_time(time_str: str, style: str) -> str:
     font_map = FONT_STYLES.get(style, FONT_STYLES["stylized"])
     return ''.join(font_map.get(char, char) for char in time_str)
 
-def get_font_previews():
-    """یک دیکشنری از نمونه‌های رندر شده فونت‌ها ایجاد می‌کند."""
-    sample_time = "12:34"
-    previews = {
-        "کشیده": {"style": "cursive", "preview": stylize_time(sample_time, "cursive")},
-        "فانتزی": {"style": "stylized", "preview": stylize_time(sample_time, "stylized")},
-        "توخالی": {"style": "doublestruck", "preview": stylize_time(sample_time, "doublestruck")},
-        "کامپیوتری": {"style": "monospace", "preview": stylize_time(sample_time, "monospace")},
-        "ساده": {"style": "normal", "preview": stylize_time(sample_time, "normal")},
-    }
-    return previews
+async def update_profile_clock(client: Client, font_style: str):
+    """حلقه اصلی که نام پروفایل را با ساعت تهران آپدیت می‌کند."""
+    phone = client.phone_number
+    logging.info(f"Starting clock bot for {phone} with font '{font_style}'...")
+    while phone in ACTIVE_BOTS:
+        try:
+            me = await client.get_me()
+            current_name = me.first_name
+            base_name = current_name
+
+            parts = current_name.rsplit(' ', 1)
+            if len(parts) > 1 and ':' in parts[-1] and any(char in ALL_DIGITS for char in parts[-1]):
+                base_name = parts[0].strip()
+
+            tehran_time = datetime.now(TEHRAN_TIMEZONE)
+            current_time_str = tehran_time.strftime("%H:%M")
+            stylized_time = stylize_time(current_time_str, font_style)
+            new_name = f"{base_name} {stylized_time}"
+            
+            if new_name != current_name:
+                await client.update_profile(first_name=new_name)
+            
+            now = datetime.now(TEHRAN_TIMEZONE)
+            sleep_duration = 60 - now.second + 0.1
+            await asyncio.sleep(sleep_duration)
+        except (UserDeactivated, AuthKeyUnregistered):
+            logging.error(f"Session for {phone} is invalid. Stopping bot.")
+            break
+        except FloodWait as e:
+            logging.warning(f"Flood wait of {e.value}s for {phone}.")
+            await asyncio.sleep(e.value + 5)
+        except Exception as e:
+            logging.error(f"An error occurred for {phone}: {e}", exc_info=True)
+            await asyncio.sleep(60)
+    
+    # پاکسازی نهایی
+    if client.is_connected:
+        await client.stop()
+    ACTIVE_BOTS.pop(phone, None)
+    logging.info(f"Clock bot for {phone} has been stopped and cleaned up.")
+
+
+async def start_bot_instance(session_string: str, phone: str, font_style: str):
+    """یک نمونه جدید از ربات را با سشن استرینگ داده شده فعال می‌کند."""
+    # اگر ربات قبلی برای این شماره فعال بود، آن را متوقف کن
+    if phone in ACTIVE_BOTS:
+        ACTIVE_BOTS.pop(phone, None)
+        await asyncio.sleep(1) # فرصت برای توقف تسک قبلی
+
+    client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string)
+    await client.start()
+    
+    # ایجاد و ذخیره تسک جدید
+    task = asyncio.create_task(update_profile_clock(client, font_style))
+    ACTIVE_BOTS[phone] = task
 
 # --- قالب‌های HTML ---
 HTML_TEMPLATE = """
@@ -70,17 +116,13 @@ HTML_TEMPLATE = """
         p { color: #666; line-height: 1.6; }
         form { display: flex; flex-direction: column; gap: 15px; margin-top: 20px; }
         input[type="tel"], input[type="text"], input[type="password"] { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; text-align: left; direction: ltr; }
-        button { padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; }
-        button:hover { background-color: #0056b3; }
+        button { padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
         .error { color: #d93025; margin-top: 15px; font-weight: bold; background-color: #fce8e6; padding: 10px; border-radius: 8px; border: 1px solid #f8a9a0; }
-        .session-box { margin-top: 15px; }
-        .session-box textarea { width: 100%; min-height: 100px; font-family: monospace; background: #f4f4f4; border: 1px solid #ddd; padding: 10px; box-sizing: border-box; border-radius: 6px; }
         label { font-weight: bold; color: #555; display: block; margin-bottom: 5px; text-align: right; }
         .font-options { border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
-        .font-option { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #ddd; cursor: pointer; transition: background-color 0.2s; }
-        .font-option:hover { background-color: #f7f7f7; }
+        .font-option { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #ddd; cursor: pointer; }
         .font-option:last-child { border-bottom: none; }
-        .font-option input[type="radio"] { margin-left: 15px; transform: scale(1.2); }
+        .font-option input[type="radio"] { margin-left: 15px; }
         .font-option label { display: flex; justify-content: space-between; align-items: center; width: 100%; font-weight: normal; cursor: pointer; }
         .font-option .preview { font-size: 1.3em; font-weight: bold; direction: ltr; color: #0056b3; }
         .success { color: #1e8e3e; }
@@ -90,7 +132,7 @@ HTML_TEMPLATE = """
     <div class="container">
         {% if step == 'GET_PHONE' %}
             <h1>ورود به سلف بات</h1>
-            <p>شماره و استایل فونت مورد نظر خود را انتخاب کنید.</p>
+            <p>شماره و استایل فونت خود را انتخاب کنید تا ربات فعال شود.</p>
             {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
             <form action="{{ url_for('login') }}" method="post">
                 <input type="hidden" name="action" value="phone">
@@ -116,35 +158,35 @@ HTML_TEMPLATE = """
             </form>
         {% elif step == 'GET_CODE' %}
             <h1>کد تایید</h1>
-            <p>کدی به حساب تلگرام شما با شماره <strong>{{ phone_number }}</strong> ارسال شد.</p>
+            <p>کدی به تلگرام شما با شماره <strong>{{ phone_number }}</strong> ارسال شد.</p>
             {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
-            <form action="{{ url_for('login') }}" method="post">
-                <input type="hidden" name="action" value="code">
-                <input type="text" name="code" placeholder="Verification Code" required>
-                <button type="submit">تایید کد</button>
-            </form>
+            <form action="{{ url_for('login') }}" method="post"> <input type="hidden" name="action" value="code"> <input type="text" name="code" placeholder="Verification Code" required> <button type="submit">تایید کد</button> </form>
         {% elif step == 'GET_PASSWORD' %}
             <h1>رمز دو مرحله‌ای</h1>
             <p>حساب شما نیاز به رمز تایید دو مرحله‌ای دارد.</p>
             {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
-            <form action="{{ url_for('login') }}" method="post">
-                <input type="hidden" name="action" value="password">
-                <input type="password" name="password" placeholder="2FA Password" required>
-                <button type="submit">ورود</button>
-            </form>
-        {% elif step == 'SHOW_SESSION' %}
-            <h1 class="success">✅ کد دائمی‌سازی آماده شد!</h1>
-            <p>برای فعال‌سازی دائمی ربات، کد زیر را کپی کرده و در متغیر <code>SESSION_STRING</code> هاست خود ذخیره کنید.</p>
-            <div class="session-box">
-                <textarea readonly onclick="this.select()">{{ session_string }}</textarea>
-            </div>
-            <p style="margin-top: 10px;">فراموش نکنید که متغیر <code>FONT_STYLE</code> را نیز با مقدار <strong>{{ font_style }}</strong> در هاست خود تنظیم کنید.</p>
+            <form action="{{ url_for('login') }}" method="post"> <input type="hidden" name="action" value="password"> <input type="password" name="password" placeholder="2FA Password" required> <button type="submit">ورود</button> </form>
+        {% elif step == 'SHOW_SUCCESS' %}
+            <h1 class="success">✅ ربات فعال شد!</h1>
+            <p>ساعت کنار نام شما قرار گرفت. تا زمانی که این سایت فعال باشد، ربات شما نیز کار خواهد کرد.</p>
             <form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">ورود با شماره جدید</button></form>
         {% endif %}
     </div>
 </body>
 </html>
 """
+
+def get_font_previews():
+    """یک دیکشنری از نمونه‌های رندر شده فونت‌ها ایجاد می‌کند."""
+    sample_time = "12:34"
+    previews = {
+        "کشیده": {"style": "cursive", "preview": stylize_time(sample_time, "cursive")},
+        "فانتزی": {"style": "stylized", "preview": stylize_time(sample_time, "stylized")},
+        "توخالی": {"style": "doublestruck", "preview": stylize_time(sample_time, "doublestruck")},
+        "کامپیوتری": {"style": "monospace", "preview": stylize_time(sample_time, "monospace")},
+        "ساده": {"style": "normal", "preview": stylize_time(sample_time, "normal")},
+    }
+    return previews
 
 async def cleanup_client(phone):
     client = ACTIVE_CLIENTS.pop(phone, None)
@@ -185,58 +227,60 @@ def login():
             code = request.form.get('code')
             p_hash = session.get('phone_code_hash')
             client = ACTIVE_CLIENTS.get(phone)
-            if not client: raise Exception("Session expired, please start over.")
+            if not client: raise Exception("Session expired.")
 
             async def sign_in_task():
                 try:
                     await client.sign_in(phone, p_hash, code)
-                    return await client.export_session_string(), None
+                    session_str = await client.export_session_string()
+                    asyncio.run_coroutine_threadsafe(start_bot_instance(session_str, phone, session.get('font_style')), EVENT_LOOP)
+                    return None
                 except SessionPasswordNeeded:
-                    return None, 'GET_PASSWORD'
+                    return 'GET_PASSWORD'
                 finally:
-                    if 'GET_PASSWORD' not in locals():
-                        await cleanup_client(phone)
+                    await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(sign_in_task(), EVENT_LOOP)
-            session_string, next_step = future.result(timeout=45)
+            next_step = future.result(timeout=45)
 
             if next_step:
                 return render_template_string(HTML_TEMPLATE, step=next_step)
             else:
-                return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
+                return render_template_string(HTML_TEMPLATE, step='SHOW_SUCCESS')
 
         elif action == 'password':
             password = request.form.get('password')
             client = ACTIVE_CLIENTS.get(phone)
-            if not client: raise Exception("Session expired, please start over.")
+            if not client: raise Exception("Session expired.")
 
             async def check_password_task():
                 try:
                     await client.check_password(password)
-                    return await client.export_session_string()
+                    session_str = await client.export_session_string()
+                    asyncio.run_coroutine_threadsafe(start_bot_instance(session_str, phone, session.get('font_style')), EVENT_LOOP)
                 finally:
                     await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(check_password_task(), EVENT_LOOP)
-            session_string = future.result(timeout=45)
-            return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
+            future.result(timeout=45)
+            return render_template_string(HTML_TEMPLATE, step='SHOW_SUCCESS')
             
     except Exception as e:
         if phone:
             asyncio.run_coroutine_threadsafe(cleanup_client(phone), EVENT_LOOP)
         logging.error(f"Error during '{action}': {e}", exc_info=True)
-        error_msg, current_step = "An unexpected error occurred. Please try again.", 'GET_PHONE'
+        error_msg, current_step = "An unexpected error occurred.", 'GET_PHONE'
         
         if isinstance(e, PhoneCodeInvalid):
-            error_msg, current_step = "The confirmation code is invalid.", 'GET_CODE'
+            error_msg, current_step = "کد تایید اشتباه است.", 'GET_CODE'
         elif isinstance(e, PasswordHashInvalid):
-            error_msg, current_step = "The 2FA password is incorrect.", 'GET_PASSWORD'
+            error_msg, current_step = "رمز دو مرحله‌ای اشتباه است.", 'GET_PASSWORD'
         elif isinstance(e, PhoneNumberInvalid):
-            error_msg = "The phone number is invalid. Check the format (+...)."
+            error_msg = "شماره تلفن نامعتبر است."
         elif isinstance(e, PhoneCodeExpired):
-            error_msg = "The confirmation code has expired. Please start over."
+            error_msg = "کد تایید منقضی شده، دوباره تلاش کنید."
         elif isinstance(e, FloodWait):
-            error_msg = f"Too many attempts. Please wait for {e.value} seconds."
+            error_msg = f"محدودیت تلگرام. لطفا {e.value} ثانیه دیگر تلاش کنید."
         
         font_previews = get_font_previews()
         if current_step == 'GET_PHONE': session.clear()
@@ -258,7 +302,7 @@ def run_asyncio_loop():
         EVENT_LOOP.close()
 
 if __name__ == "__main__":
-    logging.info("در حال اجرای برنامه...")
+    logging.info("Starting Telegram Clock Bot Service...")
     loop_thread = Thread(target=run_asyncio_loop, daemon=True)
     loop_thread.start()
     run_flask()

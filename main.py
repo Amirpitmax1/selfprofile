@@ -166,27 +166,37 @@ def run_async_in_sync(coroutine):
 
 async def send_verification_code(phone_number: str):
     """Creates a temporary client and sends the verification code."""
-    client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH, in_memory=True)
+    session_file = f"{phone_number}.session"
+    # REMOVED in_memory=True to persist session state on disk
+    client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH) 
+    
     try:
         await client.connect()
         sent_code = await client.send_code(phone_number)
         await client.disconnect()
         return {"success": True, "phone_code_hash": sent_code.phone_code_hash}
+    
     except PhoneNumberInvalid as e:
         await client.disconnect()
+        if os.path.exists(session_file): os.remove(session_file) # Cleanup on failure
         return {"success": False, "error": "شماره تلفن وارد شده نامعتبر است. لطفاً با کد کشور (مثال: +98...) وارد کنید."}
     except FloodWait as e:
         await client.disconnect()
+        if os.path.exists(session_file): os.remove(session_file) # Cleanup on failure
         return {"success": False, "error": f"تلگرام شما را موقتاً محدود کرده است. لطفاً {e.value} ثانیه دیگر تلاش کنید."}
     except Exception as e:
         await client.disconnect()
+        if os.path.exists(session_file): os.remove(session_file) # Cleanup on failure
         # The ApiIdInvalid error (if still present) will be caught here
         return {"success": False, "error": f"خطای ارسال کد: {type(e).__name__}."}
 
 
 async def sign_in_and_get_session(phone_number: str, phone_code_hash: str, code: str, password: str = None):
     """Logs in with code and/or password and returns the Session String."""
-    client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH, in_memory=True)
+    session_file = f"{phone_number}.session"
+    # Client will load temporary auth key from the session file
+    client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH)
+    
     try:
         await client.connect()
         
@@ -205,20 +215,31 @@ async def sign_in_and_get_session(phone_number: str, phone_code_hash: str, code:
         # 2. Login Successful
         session_string = await client.export_session_string()
         await client.disconnect()
+        
+        # FINAL CLEANUP: Remove the temporary session file
+        if os.path.exists(session_file):
+            os.remove(session_file)
+            
         return {"success": True, "session_string": session_string}
 
     except PhoneCodeInvalid:
         await client.disconnect()
+        # No cleanup here, as the user might retry with the correct code
         return {"success": False, "error": "کد تایید وارد شده اشتباه است."}
     except PasswordHashInvalid:
         await client.disconnect()
+        # No cleanup here, as the user might retry with the correct password
         return {"success": False, "error": "رمز عبور دو مرحله‌ای اشتباه است.", "needs_password": True}
     except PhoneCodeExpired:
         await client.disconnect()
+        # Cleanup on expired code, forcing a full start
+        if os.path.exists(session_file): os.remove(session_file)
         # This error triggers a full reset in the Flask route
         return {"success": False, "error": "کد تایید منقضی شده است. باید از ابتدا شروع کنید."}
     except Exception as e:
         await client.disconnect()
+        # Cleanup on generic errors
+        if os.path.exists(session_file): os.remove(session_file)
         return {"success": False, "error": f"خطای نامشخص در ورود: {type(e).__name__}"}
 
 # =======================================================

@@ -21,8 +21,8 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(
 # =======================================================
 # ⚠️ تنظیمات اصلی از متغیرهای محیطی خوانده می‌شود
 # =======================================================
-API_ID = os.environ.get("API_ID")
-API_HASH = os.environ.get("API_HASH")
+API_ID = os.environ.get("28190856")
+API_HASH = os.environ.get("6b9b5309c2a211b526c6ddad6eabb52")
 
 # بررسی متغیرهای حیاتی
 if not API_ID or not API_HASH:
@@ -36,8 +36,8 @@ if not API_ID or not API_HASH:
 CLOCK_FONTS = {
     "1": {"name": "Style 1 (Fullwidth)", "from": '0123456789:', "to": '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟵:'},
     "2": {"name": "Style 2 (Circled)", "from": '0123456789:', "to": '⓪①②③④⑤⑥⑦⑧⑨:'},
-    # 🌟 این خط اصلاح شد: کاراکترهای Double Struck اکنون ۱۱ کاراکتر هستند (0 تا 9 و :)
-    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝕚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
+    # 🌟 اصلاح شد: کاراکترهای Double Struck صحیح برای نمایش بهتر
+    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
     "4": {"name": "Style 4 (Monospace)", "from": '0123456789:', "to": '０１２３４５６７８９:'},
 }
 
@@ -179,7 +179,7 @@ async def send_verification_code(phone_number):
         return {"success": False, "error": f"تلگرام شما را به دلیل درخواست‌های زیاد موقتاً محدود کرده است. لطفاً {e.value} ثانیه دیگر دوباره تلاش کنید."}
     except Exception as e:
         error_type = type(e).__name__
-        logging.error(f"An unexpected error occurred during send_code: {error_type} - {e}")
+        logging.error(f"An unexpected error occurred during send_code: {error_type} - {e}", exc_info=True)
         await client.disconnect()
         detailed_error = f"خطای پیش‌بینی نشده‌ای هنگام ارسال کد رخ داد. (نوع خطا: {error_type})"
         if error_type in ["ApiIdInvalid", "ApiKeyInvalid"]:
@@ -224,7 +224,7 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
         return {"success": False, "error": "رمز عبور دو مرحله‌ای اشتباه است.", "needs_password": True}
     except Exception as e:
         error_type = type(e).__name__
-        logging.error(f"An unexpected error occurred during sign_in: {error_type} - {e}")
+        logging.error(f"An unexpected error occurred during sign_in: {error_type} - {e}", exc_info=True)
         await client.disconnect()
         
         detailed_error = f"خطای پیش‌بینی نشده‌ای در هنگام ورود رخ داد. (نوع خطا: {error_type})"

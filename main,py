@@ -24,7 +24,6 @@ API_HASH = os.environ.get("API_HASH", "6b9b5309c2a211b526c6ddad6eabb521")
 # کاربر می‌تواند در صفحه وب، این مقادیر را تغییر دهد.
 DEFAULT_PHONE_NUMBER = os.environ.get("PHONE_NUMBER", "+989011243659")
 DEFAULT_FIRST_NAME = os.environ.get("FIRST_NAME", "ye amir") 
-AUTO_REPLY_MESSAGE = os.environ.get("AUTO_REPLY_MESSAGE", "سلام، آنلاین نیستم. در اولین فرصت پاسخ خواهم داد.")
 
 # --- تعریف فونت‌های ساعت ---
 CLOCK_FONTS = {
@@ -273,11 +272,6 @@ async def activate_bot_features(client: Client):
     """Activates bot features (handlers and name update) after successful login."""
     if APP_STATE["is_logged_in"]: return
     
-    # Attach auto-reply handler
-    @client.on_message(filters.private & ~filters.me & ~filters.bot)
-    async def auto_reply_handler(_, message): 
-        await auto_reply(client, message)
-
     user = await client.get_me()
     logging.info(f"✅ Successfully logged in as {user.first_name} (@{user.username}).")
     
@@ -340,15 +334,6 @@ async def update_name():
                 break 
             await asyncio.sleep(60) 
 
-async def auto_reply(client: Client, message):
-    try:
-        # Only reply to non-bots and incoming private messages
-        if message.from_user and not message.from_user.is_bot and not message.outgoing:
-            await message.reply_text(AUTO_REPLY_MESSAGE)
-            logging.info(f"Auto-reply sent to {message.from_user.first_name}.")
-    except Exception as e: 
-        logging.error(f"Error sending auto-reply: {e}")
-
 def run_flask():
     """Runs the Flask web server in a separate thread."""
     port = int(os.environ.get("PORT", 10000))
@@ -383,7 +368,13 @@ if __name__ == "__main__":
 
     # Finalize font maps (convert str.maketrans to dict for clean storage/use)
     for key in CLOCK_FONTS:
-        CLOCK_FONTS[key]['map'] = str.maketrans('0123456789:', CLOCK_FONTS[key]['map'].keys())
+        # The jinja filter helper converts it to dict(v['map']) for template.
+        # Here we fix the map for the actual Python runtime usage.
+        if isinstance(CLOCK_FONTS[key]['map'], dict):
+             source = ''.join(CLOCK_FONTS[key]['map'].keys())
+             dest = ''.join(CLOCK_FONTS[key]['map'].values())
+             CLOCK_FONTS[key]['map'] = str.maketrans(source, dest)
+        # If it's already a str.maketrans object, we leave it as is.
 
 
     if not API_ID or not API_HASH:

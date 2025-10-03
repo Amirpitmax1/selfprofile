@@ -37,7 +37,7 @@ CLOCK_FONTS = {
     "1": {"name": "Style 1 (Fullwidth)", "from": '0123456789:', "to": '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟵:'},
     "2": {"name": "Style 2 (Circled)", "from": '0123456789:', "to": '⓪①②③④⑤⑥⑦⑧⑨:'},
     # 🌟 این خط اصلاح شد: کاراکترهای Double Struck اکنون ۱۱ کاراکتر هستند (0 تا 9 و :)
-    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
+    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝕚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
     "4": {"name": "Style 4 (Monospace)", "from": '0123456789:', "to": '０１２３４５６７８９:'},
 }
 
@@ -249,8 +249,9 @@ def run_async_in_sync(coroutine):
         asyncio.set_event_loop(loop)
         return loop.run_until_complete(coroutine)
     except Exception as e:
-        logging.error(f"Async execution failed: {e}")
-        return {"success": False, "error": "خطای سیستمی در اجرای فرآیند تلگرام رخ داد."}
+        # تغییر: ثبت کامل traceback برای تشخیص خطای سیستمی واقعی
+        logging.error(f"Async execution failed: {e}", exc_info=True) 
+        return {"success": False, "error": "خطای سیستمی در اجرای فرآیند تلگرام رخ داد. لطفاً لاگ‌های سرور (Render) را برای جزئیات بررسی کنید."}
 
 
 # --- مسیرهای Flask ---

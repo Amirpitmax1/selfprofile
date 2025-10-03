@@ -25,7 +25,7 @@ TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 app_flask = Flask(__name__)
 app_flask.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
 
-# --- دیکشنری فونت‌ها برای ساعت (فاصله اصلاح شد و فونت‌های جدید اضافه شد) ---
+# --- دیکشنری فونت‌ها برای ساعت ---
 FONT_STYLES = {
     "cursive":  {'0':'𝟎','1':'𝟏','2':'𝟐','3':'𝟑','4':'𝟒','5':'𝟓','6':'𝟔','7':'𝟕','8':'𝟖','9':'𝟗',':':':'},
     "stylized": {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵',':':':'},
@@ -73,8 +73,8 @@ HTML_TEMPLATE = """
         button { padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; }
         button:hover { background-color: #0056b3; }
         .error { color: #d93025; margin-top: 15px; font-weight: bold; background-color: #fce8e6; padding: 10px; border-radius: 8px; border: 1px solid #f8a9a0; }
-        .session-box { margin-top: 25px; padding: 15px; background-color: #e9f5ff; border: 1px solid #b3d7ff; border-radius: 8px; text-align: left; direction: ltr; }
-        .session-box textarea { width: 100%; min-height: 100px; margin-top: 10px; font-family: monospace; background: #f4f4f4; border: 1px solid #ddd; padding: 10px; box-sizing: border-box; border-radius: 6px; }
+        .session-box { margin-top: 15px; }
+        .session-box textarea { width: 100%; min-height: 100px; font-family: monospace; background: #f4f4f4; border: 1px solid #ddd; padding: 10px; box-sizing: border-box; border-radius: 6px; }
         label { font-weight: bold; color: #555; display: block; margin-bottom: 5px; text-align: right; }
         .font-options { border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
         .font-option { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #ddd; cursor: pointer; transition: background-color 0.2s; }
@@ -83,6 +83,7 @@ HTML_TEMPLATE = """
         .font-option input[type="radio"] { margin-left: 15px; transform: scale(1.2); }
         .font-option label { display: flex; justify-content: space-between; align-items: center; width: 100%; font-weight: normal; cursor: pointer; }
         .font-option .preview { font-size: 1.3em; font-weight: bold; direction: ltr; color: #0056b3; }
+        .success { color: #1e8e3e; }
     </style>
 </head>
 <body>
@@ -115,7 +116,7 @@ HTML_TEMPLATE = """
             </form>
         {% elif step == 'GET_CODE' %}
             <h1>کد تایید</h1>
-            <p>کدی به حساب تلگرام با شماره <strong>{{ phone_number }}</strong> ارسال شد.</p>
+            <p>کدی به حساب تلگرام شما با شماره <strong>{{ phone_number }}</strong> ارسال شد.</p>
             {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
             <form action="{{ url_for('login') }}" method="post">
                 <input type="hidden" name="action" value="code">
@@ -132,12 +133,11 @@ HTML_TEMPLATE = """
                 <button type="submit">ورود</button>
             </form>
         {% elif step == 'SHOW_SESSION' %}
-            <h1 class="success">✅ فعال شد با موفقیت!</h1>
-            <p>برای روشن ماندن دائمی ربات، کد زیر را در متغیر <code>SESSION_STRING</code> هاست خود ذخیره کنید.</p>
+            <h1 class="success">✅ فعال شد!</h1>
+            <p>برای دائمی کردن ربات، این کد را کپی و در هاست خود ذخیره کنید:</p>
             <div class="session-box">
                 <textarea readonly onclick="this.select()">{{ session_string }}</textarea>
             </div>
-            <p style="margin-top: 10px;">فراموش نکنید که متغیر <code>FONT_STYLE</code> را نیز با مقدار <strong>{{ font_style }}</strong> در هاست خود تنظیم کنید.</p>
             <form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">ورود با شماره جدید</button></form>
         {% endif %}
     </div>
@@ -202,7 +202,9 @@ def login():
             if next_step:
                 return render_template_string(HTML_TEMPLATE, step=next_step)
             else:
-                return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
+                # به کاربر یادآوری می‌کنیم که FONT_STYLE را هم تنظیم کند
+                os.environ['FONT_STYLE'] = session.get('font_style')
+                return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string)
 
         elif action == 'password':
             password = request.form.get('password')
@@ -218,7 +220,8 @@ def login():
 
             future = asyncio.run_coroutine_threadsafe(check_password_task(), EVENT_LOOP)
             session_string = future.result(timeout=45)
-            return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
+            os.environ['FONT_STYLE'] = session.get('font_style')
+            return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string)
             
     except Exception as e:
         if phone:

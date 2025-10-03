@@ -33,7 +33,8 @@ FONT_STYLES = {
     "monospace":{'0':'𝟶','1':'𝟷','2':'𝟸','3':'𝟹','4':'𝟺','5':'𝟻','6':'𝟼','7':'𝟽','8':'𝟾','9':'𝟿',':':':'},
     "normal":   {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
 }
-ALL_DIGITS = "".join(set("".join(d.values() for d in FONT_STYLES.values())))
+# --- [FIX] Corrected line to fix the TypeError ---
+ALL_DIGITS = "".join(set(char for font in FONT_STYLES.values() for char in font.values()))
 
 EVENT_LOOP = asyncio.new_event_loop()
 ACTIVE_CLIENTS = {} # برای مدیریت کلاینت‌ها در حین ورود
@@ -90,7 +91,9 @@ async def start_bot_instance(session_string: str, phone: str, font_style: str):
     """یک نمونه جدید از ربات را با سشن استرینگ داده شده فعال می‌کند."""
     # اگر ربات قبلی برای این شماره فعال بود، آن را متوقف کن
     if phone in ACTIVE_BOTS:
-        ACTIVE_BOTS.pop(phone, None)
+        task = ACTIVE_BOTS.pop(phone, None)
+        if task:
+            task.cancel()
         await asyncio.sleep(1) # فرصت برای توقف تسک قبلی
 
     client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string)
@@ -238,6 +241,7 @@ def login():
                 except SessionPasswordNeeded:
                     return 'GET_PASSWORD'
                 finally:
+                    # در هر صورت کلاینت موقت را پاکسازی می‌کنیم
                     await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(sign_in_task(), EVENT_LOOP)

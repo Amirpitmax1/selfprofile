@@ -161,7 +161,7 @@ async def send_verification_code(phone_number):
         api_hash=API_HASH, 
         in_memory=True, 
         phone_number=phone_number, 
-        phone_code_hash="",
+        # phone_code_hash="",  # ❌ این پارامتر حذف شد، زیرا باعث خطای TypeError در Pyrogram میشد
     )
 
     try:

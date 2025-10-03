@@ -21,16 +21,16 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(
 # =======================================================
 # ⚠️ تنظیمات اصلی از متغیرهای محیطی خوانده می‌شود
 # =======================================================
-API_ID = os.environ.get("28190856")
-API_HASH = os.environ.get("6b9b5309c2a211b526c6ddad6eabb52")
+# ⭐️ اصلاح شد: باید نام متغیر محیطی را به تابع get بدهید، نه مقدار آن را
+API_ID = os.environ.get("API_ID")
+API_HASH = os.environ.get("API_HASH")
 
 # بررسی متغیرهای حیاتی
 if not API_ID or not API_HASH:
     logging.critical("CRITICAL ERROR: API_ID or API_HASH environment variables are not set!")
-    # برای تست محلی، می‌توان مقادیر پیش‌فرض قرار داد
+    # این بخش فقط برای تست محلی است و در محیط Render نباید فعال شود
     API_ID = os.environ.get("API_ID", "28190856")
-    API_HASH = os.environ.get("API_HASH", "6b9b5309c2a211b526c6ddad6eabb521")
-
+    API_HASH = os.environ.get("API_HASH", "6b9b5309c2a211b526c6ddad6eabb521") # دقت کنید که مقدار 521 را در انتها اضافه کردم
 
 # --- تعریف فونت‌های ساعت ---
 CLOCK_FONTS = {
@@ -52,7 +52,6 @@ app_flask.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'a_very_secr
 def jinja_stylize_preview(time_str: str, to_chars: str) -> str:
     """فیلتر Jinja برای نمایش پیش‌نمایش فونت در قالب."""
     from_chars = '0123456789:'
-    # این خط قبلاً به دلیل طول نامساوی در Style 3 خطا می‌داد که اکنون برطرف شد.
     translation_map = str.maketrans(from_chars, to_chars)
     return time_str.translate(translation_map)
 
@@ -161,7 +160,6 @@ async def send_verification_code(phone_number):
         api_hash=API_HASH, 
         in_memory=True, 
         phone_number=phone_number, 
-        # phone_code_hash="",  # ❌ این پارامتر حذف شد، زیرا باعث خطای TypeError در Pyrogram میشد
     )
 
     try:
@@ -216,7 +214,7 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
     # مدیریت خطای منقضی شدن کد 
     except PhoneCodeExpired: 
         await client.disconnect()
-        logging.error("PhoneCodeExpired: The user took too long to enter the code.")
+        logging.error("PhoneCodeExpired: The user took too long to enter the code or the key/hash is restricted.")
         return {"success": False, "error": "کد تایید منقضی شده است. کدهای تلگرام سریعاً منقضی می‌شوند. لطفاً برگردید و دوباره تلاش کنید."}
         
     except PasswordHashInvalid:

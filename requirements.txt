@@ -1,5 +1,3 @@
-pyrogram
 Flask
-requests
-waitress
-python-telegram-core
+Pyrogram
+TgCrypto

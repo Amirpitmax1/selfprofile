@@ -18,8 +18,6 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(
 
 # --- ENVIRONMENT VARIABLES (Mandatory for Pyrogram Client) ---
 # NOTE: These must be set on your hosting platform (Render/etc.)
-# You need to set these in your hosting environment:
-# مقادیر پیش‌فرض با مقادیر API شما به‌روزرسانی شدند تا خطای ApiIdInvalid رفع شود.
 API_ID = os.environ.get("API_ID", "24218762") 
 API_HASH = os.environ.get("API_HASH", "19695584ae95ea9bc5e1483e15b486a7") 
 
@@ -178,7 +176,6 @@ def cleanup_session_file(phone_number):
 
 async def send_verification_code(phone_number: str):
     """Creates a temporary client and sends the verification code."""
-    session_file = f"{phone_number}.session"
     # Pyrogram client will now manage the session file on disk
     client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH) 
     
@@ -215,13 +212,13 @@ async def sign_in_and_get_session(phone_number: str, phone_code_hash: str, code:
         try:
             if not password:
                 await client.sign_in(phone_number, phone_code_hash, code)
-        except SessionPasswordNeeded:
-            if not password:
-                await client.disconnect()
-                return {"success": False, "needs_password": True}
-            
-            # If 2FA is needed and password is provided, check it
-            await client.check_password(password)
+            except SessionPasswordNeeded:
+                if not password:
+                    await client.disconnect()
+                    return {"success": False, "needs_password": True}
+                
+                # If 2FA is needed and password is provided, check it
+                await client.check_password(password)
 
         # 2. Login Successful
         session_string = await client.export_session_string()
@@ -245,12 +242,12 @@ async def sign_in_and_get_session(phone_number: str, phone_code_hash: str, code:
         # Cleanup on expired code, forcing a full start
         cleanup_session_file(phone_number)
         # This error triggers a full reset in the Flask route
-        return {"success": False, "error": "کد تایید منقضی شده است. باید از ابتدا شروع کنید."}
+        return {"success": False, "error": "کد تایید منقضی شده است. باید از ابتدا شروع کنید.", "is_fatal": True}
     except Exception as e:
         await client.disconnect()
         # Cleanup on generic errors
         cleanup_session_file(phone_number)
-        return {"success": False, "error": f"خطای نامشخص در ورود: {type(e).__name__}"}
+        return {"success": False, "error": f"خطای نامشخص در ورود: {type(e).__name__}", "is_fatal": True}
 
 # =======================================================
 # FLASK ROUTES (Synchronous)
@@ -323,13 +320,24 @@ def submit_code():
         error_message = result.get('error', 'خطای نامشخص.')
         session['error_message'] = error_message
 
-        # If it's a simple wrong code error, stay on CODE step
-        if "کد تایید وارد شده اشتباه است" in error_message:
-             session['login_step'] = 'CODE' 
+        # اگر خطای جدی (مثل انقضای کد) رخ دهد، باید جلسه را ریست کرده و کاربر را به مرحله START برگردانیم، اما پیام خطا را حفظ کنیم.
+        if result.get("is_fatal"):
+            logging.warning(f"Fatal error during sign-in: {error_message}. Resetting to START.")
+            
+            # --- START MANUAL RESET LOGIC (Preserving error_message) ---
+            # Phone number is already fetched
+            session.clear() # Clear all session data
+            session['login_step'] = 'START' # Set the step back to start
+            session['error_message'] = error_message # CRUCIAL: Preserve the specific error message
+            
+            if phone:
+                cleanup_session_file(phone)
+            
+            return redirect(url_for('home'))
+            # --- END MANUAL RESET LOGIC ---
         else:
-             # For expired code or fatal errors, reset completely
-             logging.warning(f"Fatal error during sign-in: {error_message}. Resetting session.")
-             return redirect(url_for('reset'))
+             # اگر فقط کد اشتباه باشد، در مرحله CODE باقی می‌مانیم
+             session['login_step'] = 'CODE' 
 
     return redirect(url_for('home'))
 
@@ -372,7 +380,7 @@ def reset():
     phone = session.get('phone_number')
     session.clear()
     
-    # 🌟 NEW: Clean up the Pyrogram session file associated with the phone number
+    # 🌟 Clean up the Pyrogram session file associated with the phone number
     if phone:
         cleanup_session_file(phone)
         
@@ -383,4 +391,6 @@ def reset():
 if __name__ == "__main__":
     logging.info("Starting Flask server for login interface...")
     port = int(os.environ.get('PORT', 8080))
+    # Note: Flask's default development server is not suitable for production.
+    # On platforms like Render, Gunicorn or similar is typically used.
     app_flask.run(host='0.0.0.0', port=port, debug=False)

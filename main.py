@@ -21,23 +21,23 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(
 # =======================================================
 API_ID = os.environ.get("API_ID", "28190856") 
 API_HASH = os.environ.get("API_HASH", "6b9b5309c2a211b526c6ddad6eabb521") 
-# PHONE_NUMBER و FIRST_NAME اکنون فقط به عنوان مقادیر پیش‌فرض استفاده می‌شوند.
-# کاربر می‌تواند در صفحه وب، این مقادیر را تغییر دهد.
 DEFAULT_PHONE_NUMBER = os.environ.get("PHONE_NUMBER", "+989011243659")
 DEFAULT_FIRST_NAME = os.environ.get("FIRST_NAME", "ye amir") 
 
-# --- تعریف فونت‌های ساعت ---
+# --- تعریف فونت‌های ساعت (حالا به عنوان رشته‌های خام ذخیره می‌شوند) ---
+# We store 'from' and 'to' strings instead of the maketrans object to avoid TypeError in Jinja
 CLOCK_FONTS = {
-    "1": {"name": "Style 1 (Fullwidth)", "map": str.maketrans('0123456789:', '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟿:')}, # Default
-    "2": {"name": "Style 2 (Circled)", "map": str.maketrans('0123456789:', '⓪①②③④⑤⑥⑦⑧⑨:')},
-    "3": {"name": "Style 3 (Double Struck)", "map": str.maketrans('0123456789:', '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:')}, 
-    "4": {"name": "Style 4 (Monospace)", "map": str.maketrans('0123456789:', '０１２３４５６７８９:')},
+    "1": {"name": "Style 1 (Fullwidth)", "from": '0123456789:', "to": '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟿:'},
+    "2": {"name": "Style 2 (Circled)", "from": '0123456789:', "to": '⓪①②③④⑤⑥⑦⑧⑨:'},
+    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
+    "4": {"name": "Style 4 (Monospace)", "from": '0123456789:', "to": '０１２３４５６７８９:'},
 }
+
 # --- متغیرهای برنامه ---
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 app_flask = Flask(__name__)
 
-# --- مدیریت وضعیت برنامه (اکنون دینامیک‌تر است) ---
+# --- مدیریت وضعیت برنامه ---
 APP_STATE = {
     "client": None,
     "phone_number": DEFAULT_PHONE_NUMBER,
@@ -46,13 +46,12 @@ APP_STATE = {
     "phone_code_hash": None,
     "is_logged_in": False,
     "loop": None,
-    # New Stages: START -> PHONE -> CODE -> PASSWORD -> RUNNING/FAILED
     "login_step": "START",  
     "error_message": None,
     "show_session_message": False,
 }
 
-# --- Pyrogram Client Initialization (Run when main.py is imported by Gunicorn) ---
+# --- Pyrogram Client Initialization ---
 SESSION_STRING = os.environ.get("SESSION_STRING")
 
 if not API_ID or not API_HASH:
@@ -67,45 +66,53 @@ else:
 
 APP_STATE["client"] = client
 
-# --- Async Loop Management (Runs Pyrogram in a separate thread for Gunicorn compatibility) ---
+# --- Async Loop Management ---
 
 def start_asyncio_loop():
     """Sets up and runs the Pyrogram client/tasks in a separate thread."""
-    # Create a new loop for this thread
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     APP_STATE["loop"] = loop
     
     try:
         if SESSION_STRING:
-            # Run the full bot logic (start, update name, wait for disconnection)
             loop.run_until_complete(main_bot_runner())
         else:
-            # Just keep the loop running so web routes can use run_coroutine_threadsafe
             logging.info("Starting Pyrogram client connection in background...")
-            loop.run_until_complete(APP_STATE["client"].connect())
+            client = APP_STATE["client"] # Get client reference
+            
+            # FIX for TypeError: An asyncio.Future, a coroutine or an awaitable is required
+            # Ensure we only call connect() if the client is not already connected.
+            if not client.is_connected:
+                # We connect here but don't start the client yet
+                loop.run_until_complete(client.connect()) 
+            
             loop.run_forever()
     except (KeyboardInterrupt, SystemExit):
         logging.info("Asyncio loop stopping...")
     finally:
         # Cleanup
         if APP_STATE["client"].is_connected:
-            loop.run_until_complete(APP_STATE["client"].stop()) 
+            # Check if the loop is running before trying to stop the client
+            if loop.is_running():
+                # run_coroutine_threadsafe needed if called from Gunicorn thread, but here we are in the loop thread
+                # We can use run_until_complete safely here as we are in the same thread and the loop is about to close
+                loop.run_until_complete(APP_STATE["client"].stop()) 
         loop.close()
 
-# Start the asyncio loop in a daemon thread upon file import
-# This ensures it runs regardless of whether Gunicorn or main.py starts it.
 if not APP_STATE.get("loop"): 
     try:
         async_thread = Thread(target=start_asyncio_loop, daemon=True)
         async_thread.start()
-        # Give the thread a moment to initialize the loop
+        # Give the thread a moment to initialize the loop and connect
         time.sleep(1) 
         logging.info("Background Pyrogram asyncio loop started successfully.")
     except Exception as e:
         logging.error(f"Failed to start background asyncio thread: {e}")
 
+
 # --- قالب‌های HTML ---
+# ⚠️ فیلتر Jinja2 برای پیش‌نمایش فونت را حذف می‌کنیم.
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -148,7 +155,7 @@ HTML_TEMPLATE = """
                 <select id="font" name="font_key" required>
                     {% for key, font in clock_fonts.items() %}
                         <option value="{{ key }}" {% if key == selected_font_key %}selected{% endif %}>
-                            {{ key }}. {{ font.name }} ({{ '12:34' | stylize_time(font.map) }})
+                            {{ key }}. {{ font.name }} ({{ '12:34' | stylize_preview(font.to) }})
                         </option>
                     {% endfor %}
                 </select>
@@ -184,18 +191,19 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# تعریف فیلتر برای Jinja2 تا بتواند پیش‌نمایش فونت را نمایش دهد
-def jinja_stylize_time(time_str, translation_map):
-    if isinstance(translation_map, dict):
-        # Convert map back to maketrans format for Jinja usage
-        map_str = str.maketrans(
-            ''.join(translation_map.keys()), 
-            ''.join(translation_map.values())
-        )
-        return time_str.translate(map_str)
-    return time_str # Fallback
+# فیلتر جدید Jinja2 که فقط برای نمایش استایل استفاده می‌شود و نیازی به maketrans ندارد
+def jinja_stylize_preview(time_str: str, to_chars: str) -> str:
+    """Jinja filter to simply map characters for preview using raw strings."""
+    from_chars = '0123456789:'
+    if len(from_chars) != len(to_chars):
+        # Should not happen if CLOCK_FONTS is correct, but safe check
+        return time_str 
+    
+    # Create the maketrans map locally for the preview string
+    translation_map = str.maketrans(from_chars, to_chars)
+    return time_str.translate(translation_map)
 
-app_flask.jinja_env.filters['stylize_time'] = jinja_stylize_time
+app_flask.jinja_env.filters['stylize_preview'] = jinja_stylize_preview
 
 
 @app_flask.route('/')
@@ -205,7 +213,8 @@ def home():
         APP_STATE["login_step"] = "RUNNING"
     
     # If the app is in PHONE state (waiting for code to be sent), attempt to send it
-    if APP_STATE["login_step"] == "PHONE" and not APP_STATE["phone_code_hash"]:
+    if APP_STATE["login_step"] == "PHONE" and not APP_STATE["phone_code_hash"] and APP_STATE['loop'] and APP_STATE['loop'].is_running():
+        # NOTE: We must ensure the loop is running before calling run_coroutine_threadsafe
         future = asyncio.run_coroutine_threadsafe(handle_phone_submit(APP_STATE["phone_number"]), APP_STATE['loop'])
         try:
             future.result(timeout=30)
@@ -222,8 +231,8 @@ def home():
         "phone_code_hash": APP_STATE["phone_code_hash"],
         "error_message": APP_STATE["error_message"],
         "show_session_message": APP_STATE["show_session_message"],
-        # Ensure only serializable objects are passed (dict from maketrans)
-        "clock_fonts": {k: {'name': v['name'], 'map': dict(v['map'])} for k, v in CLOCK_FONTS.items()}, 
+        # Pass the raw font data for Jinja preview
+        "clock_fonts": CLOCK_FONTS, 
     }
     return render_template_string(HTML_TEMPLATE, **template_vars)
 
@@ -301,12 +310,16 @@ async def handle_phone_submit(phone_number):
 async def handle_code_submit(code, phone_code_hash):
     client = APP_STATE["client"]
     try:
+        # client must be started before signing in
+        if not SESSION_STRING: await client.start()
         await client.sign_in(APP_STATE["phone_number"], phone_code_hash, code) 
         await activate_bot_features(client)
     except SessionPasswordNeeded:
         logging.info("Two-factor authentication required.")
         APP_STATE["login_step"] = "PASSWORD"
     except Exception as e:
+        # If sign_in fails, client remains connected if started, or can be disconnected.
+        # We rely on the thread loop closing it if the app shuts down.
         raise e
 
 async def handle_password_submit(password):
@@ -344,15 +357,19 @@ async def activate_bot_features(client: Client):
         logging.warning("=" * 70)
         APP_STATE["show_session_message"] = True
 
-def stylize_time(time_str: str, font_map: dict) -> str:
+def get_font_map(font_key):
+    """Creates the maketrans object on demand."""
+    font_data = CLOCK_FONTS.get(font_key, CLOCK_FONTS["1"])
+    return str.maketrans(font_data["from"], font_data["to"])
+
+def stylize_time(time_str: str, font_map) -> str:
     """Uses the selected font map to style the time."""
-    # font_map is an actual str.maketrans object created in __main__ or CLOCK_FONTS
     return time_str.translate(font_map)
 
 async def update_name():
     client = APP_STATE["client"]
-    # Get the selected font map
-    font_map = CLOCK_FONTS.get(APP_STATE["selected_font_key"], CLOCK_FONTS["1"])["map"]
+    # Create the maketrans object once for the running task
+    font_map = get_font_map(APP_STATE["selected_font_key"])
     
     while APP_STATE["is_logged_in"]: 
         try:
@@ -360,7 +377,6 @@ async def update_name():
             current_time_str = tehran_time.strftime("%H:%M")
             stylized_time_str = stylize_time(current_time_str, font_map)
             
-            # Use the first_name stored in APP_STATE
             name_with_clock = f"{APP_STATE['first_name']} {stylized_time_str}"
             
             if not client.is_connected:
@@ -379,10 +395,12 @@ async def update_name():
             await asyncio.sleep(e.value + 5)
         except Exception as e:
             logging.error(f"Error updating name: {e}")
-            if not client.is_connected: 
+            # If the client is connected but fails repeatedly, we should not exit the whole app.
+            if client.is_connected: 
+                await asyncio.sleep(60) 
+            else:
                 logging.error("Client permanently disconnected. Stopping update_name task.")
                 break 
-            await asyncio.sleep(60) 
 
 
 async def main_bot_runner():
@@ -391,24 +409,29 @@ async def main_bot_runner():
     logging.info("Attempting to start the bot via SESSION_STRING...")
     try:
         await client.start()
-        # Fetch user info after starting with session string to set FIRST_NAME and start clock
+        
+        # Load user info and settings
         user = await client.get_me()
         APP_STATE["first_name"] = user.first_name.split()[0] if user.first_name else DEFAULT_FIRST_NAME
         APP_STATE["phone_number"] = user.phone_number or APP_STATE["phone_number"]
-
-        # If SESSION_STRING is used, we assume default font for simplicity
         APP_STATE["selected_font_key"] = os.environ.get("FONT_KEY", "1")
         
         await activate_bot_features(client)
+        # Keep running until external shutdown
         await client.wait_for_disconnection()
+        logging.info("Client disconnected. Shutting down runner.")
     except Exception as e:
-        logging.error(f"Automatic start failed: {e}. Session string might be invalid.")
-        APP_STATE["login_step"] = "FAILED"
-        APP_STATE["error_message"] = "Session string نامعتبر است. لطفاً برای دریافت رشته جدید، دوباره وارد شوید."
+        logging.error(f"Automatic start failed: {e}. Session string might be invalid or client terminated.")
+        if not SESSION_STRING:
+             # Only transition to FAILED if we are in the web login flow and the first attempt failed
+             # If using SESSION_STRING, the main loop will just stop.
+             APP_STATE["login_step"] = "FAILED"
+             APP_STATE["error_message"] = "Session string نامعتبر است. لطفاً برای دریافت رشته جدید، دوباره وارد شوید."
 
 
 if __name__ == "__main__":
-    # --- BLOCK FOR LOCAL TESTING ONLY ---
+    # If running locally via 'python main.py', we run the Flask server here.
+    # On Render/Gunicorn, this block is skipped, and Gunicorn calls app_flask directly.
     logging.info("Running Flask in development mode for local testing.")
     port = int(os.environ.get('PORT', 5000))
     app_flask.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)

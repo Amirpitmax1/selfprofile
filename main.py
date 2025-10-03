@@ -29,8 +29,9 @@ API_HASH = os.environ.get("API_HASH")
 if not API_ID or not API_HASH:
     logging.critical("CRITICAL ERROR: API_ID or API_HASH environment variables are not set!")
     # این بخش فقط برای تست محلی است و در محیط Render نباید فعال شود
-    API_ID = os.environ.get("API_ID", "28190856")
-    API_HASH = os.environ.get("API_HASH", "6b9b5309c2a211b526c6ddad6eabb521") # دقت کنید که مقدار 521 را در انتها اضافه کردم
+    # مقادیر جدید API ID و API HASH شما در زیر جایگزین شدند.
+    API_ID = os.environ.get("API_ID", "24218762")
+    API_HASH = os.environ.get("API_HASH", "19695584ae95ea9bc5e1483e15b486a7")
 
 # --- تعریف فونت‌های ساعت ---
 CLOCK_FONTS = {

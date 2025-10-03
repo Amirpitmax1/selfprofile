@@ -9,7 +9,7 @@ from pyrogram.errors import (
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from flask import Flask, request, render_template_string, redirect
-from threading import Thread
+from threading import Thread 
 
 # --- تنظیمات لاگ‌نویسی ---
 # Logging setup
@@ -29,7 +29,7 @@ DEFAULT_FIRST_NAME = os.environ.get("FIRST_NAME", "ye amir")
 CLOCK_FONTS = {
     "1": {"name": "Style 1 (Fullwidth)", "map": str.maketrans('0123456789:', '𝟬𝟭𝟮𝟯𝟰𝟱𝟲𝟳𝟴𝟵:')}, # Default
     "2": {"name": "Style 2 (Circled)", "map": str.maketrans('0123456789:', '⓪①②③④⑤⑥⑦⑧⑨:')},
-    "3": {"name": "Style 3 (Double Struck)", "map": str.maketrans('0123456789:', '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:')},
+    "3": {"name": "Style 3 (Double Struck)", "map": str.maketrans('0123456789:', '𝟘𝟙𝚠𝟛𝟜𝟝𝟞𝟟𝠙:')},
     "4": {"name": "Style 4 (Monospace)", "map": str.maketrans('0123456789:', '０１２３４５６７８９:')},
 }
 # --- متغیرهای برنامه ---
@@ -334,10 +334,7 @@ async def update_name():
                 break 
             await asyncio.sleep(60) 
 
-def run_flask():
-    """Runs the Flask web server in a separate thread."""
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host='0.0.0.0', port=port, use_reloader=False)
+# تابع run_flask و اجرای آن در Thread حذف شد. Gunicorn باید آن را اجرا کند.
 
 async def main_bot_runner():
     """Main runner for the bot when a SESSION_STRING is available."""
@@ -367,14 +364,11 @@ if __name__ == "__main__":
     SESSION_STRING = os.environ.get("SESSION_STRING")
 
     # Finalize font maps (convert str.maketrans to dict for clean storage/use)
-    for key in CLOCK_FONTS:
-        # The jinja filter helper converts it to dict(v['map']) for template.
-        # Here we fix the map for the actual Python runtime usage.
-        if isinstance(CLOCK_FONTS[key]['map'], dict):
-             source = ''.join(CLOCK_FONTS[key]['map'].keys())
-             dest = ''.join(CLOCK_FONTS[key]['map'].values())
-             CLOCK_FONTS[key]['map'] = str.maketrans(source, dest)
-        # If it's already a str.maketrans object, we leave it as is.
+    # 🐛 FIX: The explicit conversion logic below caused the TypeError because 
+    # the keys of a str.maketrans object are integers (Unicode code points), 
+    # not strings, leading to the TypeError when using ''.join().
+    # The map objects are already correctly initialized above, so we remove 
+    # this redundant and faulty logic.
 
 
     if not API_ID or not API_HASH:
@@ -391,11 +385,6 @@ if __name__ == "__main__":
 
     APP_STATE["client"] = client
     
-    # Start Flask web server in a background thread
-    flask_thread = Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    logging.info("✅ Web server is running.")
-
     # Main Asyncio loop setup
     loop = asyncio.get_event_loop()
     APP_STATE["loop"] = loop

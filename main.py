@@ -234,15 +234,19 @@ def login():
             if not client: raise Exception("Session expired.")
 
             async def sign_in_task():
+                needs_password = False
                 try:
                     await client.sign_in(phone, p_hash, code)
                     session_str = await client.export_session_string()
                     asyncio.run_coroutine_threadsafe(start_bot_instance(session_str, phone, session.get('font_style')), EVENT_LOOP)
                     return None
                 except SessionPasswordNeeded:
+                    needs_password = True
                     return 'GET_PASSWORD'
                 finally:
-                    await cleanup_client(phone)
+                    # [FIX] Only cleanup if login is fully successful or fails, not if password is needed
+                    if not needs_password:
+                        await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(sign_in_task(), EVENT_LOOP)
             next_step = future.result(timeout=45)
@@ -263,6 +267,7 @@ def login():
                     session_str = await client.export_session_string()
                     asyncio.run_coroutine_threadsafe(start_bot_instance(session_str, phone, session.get('font_style')), EVENT_LOOP)
                 finally:
+                    # Cleanup after the final step
                     await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(check_password_task(), EVENT_LOOP)

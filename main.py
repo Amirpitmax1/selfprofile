@@ -19,8 +19,9 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(
 # --- ENVIRONMENT VARIABLES (Mandatory for Pyrogram Client) ---
 # NOTE: These must be set on your hosting platform (Render/etc.)
 # You need to set these in your hosting environment:
-API_ID = os.environ.get("API_ID", "1234567") 
-API_HASH = os.environ.get("API_HASH", "abcdef1234567890abcdef1234567890") 
+# مقادیر پیش‌فرض با مقادیر API شما به‌روزرسانی شدند تا خطای ApiIdInvalid رفع شود.
+API_ID = os.environ.get("API_ID", "24218762") 
+API_HASH = os.environ.get("API_HASH", "19695584ae95ea9bc5e1483e15b486a7") 
 
 if not API_ID or not API_HASH:
     logging.critical("CRITICAL ERROR: API_ID or API_HASH environment variables are not set! Using default placeholders.")
@@ -179,6 +180,7 @@ async def send_verification_code(phone_number: str):
         return {"success": False, "error": f"تلگرام شما را موقتاً محدود کرده است. لطفاً {e.value} ثانیه دیگر تلاش کنید."}
     except Exception as e:
         await client.disconnect()
+        # The ApiIdInvalid error (if still present) will be caught here
         return {"success": False, "error": f"خطای ارسال کد: {type(e).__name__}."}
 
 

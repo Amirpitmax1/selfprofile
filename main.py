@@ -169,9 +169,13 @@ async def send_verification_code(phone_number):
         await client.disconnect()
         return {"success": False, "error": f"تلگرام شما را به دلیل درخواست‌های زیاد موقتاً محدود کرده است. لطفاً {e.value} ثانیه دیگر دوباره تلاش کنید."}
     except Exception as e:
-        logging.error(f"An unexpected error occurred during send_code: {e}")
+        error_type = type(e).__name__
+        logging.error(f"An unexpected error occurred during send_code: {error_type} - {e}")
         await client.disconnect()
-        return {"success": False, "error": "خطای پیش‌بینی نشده‌ای هنگام ارسال کد رخ داد. لطفاً از اتصال اینترنت خود مطمئن شوید و دوباره تلاش کنید."}
+        detailed_error = f"خطای پیش‌بینی نشده‌ای هنگام ارسال کد رخ داد. (نوع خطا: {error_type})"
+        if error_type in ["ApiIdInvalid", "ApiKeyInvalid"]:
+            detailed_error += " لطفاً مطمئن شوید که API_ID و API_HASH به درستی به عنوان متغیرهای محیطی تنظیم شده‌اند."
+        return {"success": False, "error": detailed_error}
 
 
 async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=None):
@@ -203,9 +207,18 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
         await client.disconnect()
         return {"success": False, "error": "رمز عبور دو مرحله‌ای اشتباه است.", "needs_password": True}
     except Exception as e:
-        logging.error(f"An unexpected error occurred during sign_in: {e}")
+        error_type = type(e).__name__
+        logging.error(f"An unexpected error occurred during sign_in: {error_type} - {e}")
         await client.disconnect()
-        return {"success": False, "error": "خطای پیش‌بینی نشده‌ای در هنگام ورود رخ داد."}
+        
+        detailed_error = f"خطای پیش‌بینی نشده‌ای در هنگام ورود رخ داد. (نوع خطا: {error_type})"
+        # افزودن راهنمایی برای خطاهای رایج
+        if error_type in ["ApiIdInvalid", "ApiKeyInvalid"]:
+            detailed_error += " لطفاً مطمئن شوید که API_ID و API_HASH به درستی به عنوان متغیرهای محیطی تنظیم شده‌اند."
+        elif "Telegram is having internal issues" in str(e):
+             detailed_error = "تلگرام در حال حاضر با مشکلات داخلی مواجه است. لطفاً چند دقیقه دیگر دوباره تلاش کنید."
+
+        return {"success": False, "error": detailed_error}
 
 
 # --- مسیرهای Flask ---

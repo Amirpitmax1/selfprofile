@@ -25,17 +25,34 @@ TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 app_flask = Flask(__name__)
 app_flask.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
 
-# --- دیکشنری فونت‌ها برای ساعت (فاصله اصلاح شد) ---
+# --- دیکشنری فونت‌ها برای ساعت (فاصله اصلاح شد و فونت‌های جدید اضافه شد) ---
 FONT_STYLES = {
+    "cursive":  {'0':'𝟎','1':'𝟏','2':'𝟐','3':'𝟑','4':'𝟒','5':'𝟓','6':'𝟔','7':'𝟕','8':'𝟖','9':'𝟗',':':':'},
     "stylized": {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵',':':':'},
-    "bold": {'0':'𝟎','1':'𝟏','2':'𝟐','3':'𝟑','4':'𝟒','5':'𝟓','6':'𝟔','7':'𝟕','8':'𝟖','9':'𝟗',':':':'},
-    "monospace": {'0':'𝟶','1':'𝟷','2':'𝟸','3':'𝟹','4':'𝟺','5':'𝟻','6':'𝟼','7':'𝟽','8':'𝟾','9':'𝟿',':':':'},
-    "normal": {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
+    "doublestruck": {'0':'𝟘','1':'𝟙','2':'𝟚','3':'𝟛','4':'𝟜','5':'𝟝','6':'𝟞','7':'𝟟','8':'𝟠','9':'𝟡',':':':'},
+    "monospace":{'0':'𝟶','1':'𝟷','2':'𝟸','3':'𝟹','4':'𝟺','5':'𝟻','6':'𝟼','7':'𝟽','8':'𝟾','9':'𝟿',':':':'},
+    "normal":   {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
 }
 
-# --- مدیریت وضعیت برنامه ---
 EVENT_LOOP = asyncio.new_event_loop()
 ACTIVE_CLIENTS = {}
+
+# --- توابع کمکی ---
+def stylize_time(time_str: str, style: str) -> str:
+    font_map = FONT_STYLES.get(style, FONT_STYLES["stylized"])
+    return ''.join(font_map.get(char, char) for char in time_str)
+
+def get_font_previews():
+    """یک دیکشنری از نمونه‌های رندر شده فونت‌ها ایجاد می‌کند."""
+    sample_time = "12:34"
+    previews = {
+        "کشیده": {"style": "cursive", "preview": stylize_time(sample_time, "cursive")},
+        "فانتزی": {"style": "stylized", "preview": stylize_time(sample_time, "stylized")},
+        "توخالی": {"style": "doublestruck", "preview": stylize_time(sample_time, "doublestruck")},
+        "کامپیوتری": {"style": "monospace", "preview": stylize_time(sample_time, "monospace")},
+        "ساده": {"style": "normal", "preview": stylize_time(sample_time, "normal")},
+    }
+    return previews
 
 # --- قالب‌های HTML ---
 HTML_TEMPLATE = """
@@ -51,47 +68,54 @@ HTML_TEMPLATE = """
         .container { background: white; padding: 30px 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; width: 100%; max-width: 480px; }
         h1 { color: #333; margin-bottom: 20px; font-size: 1.5em; }
         p { color: #666; line-height: 1.6; }
-        strong { color: #0056b3; }
         form { display: flex; flex-direction: column; gap: 15px; margin-top: 20px; }
-        input, select { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; text-align: left; direction: ltr; font-family: 'Vazirmatn', sans-serif; }
-        select { text-align: right; direction: rtl; }
-        button { padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; font-family: 'Vazirmatn', sans-serif; }
+        input[type="tel"], input[type="text"], input[type="password"] { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; text-align: left; direction: ltr; }
+        button { padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; }
         button:hover { background-color: #0056b3; }
         .error { color: #d93025; margin-top: 15px; font-weight: bold; background-color: #fce8e6; padding: 10px; border-radius: 8px; border: 1px solid #f8a9a0; }
-        .success { color: #1e8e3e; font-size: 1.2em; font-weight: bold; }
         .session-box { margin-top: 25px; padding: 15px; background-color: #e9f5ff; border: 1px solid #b3d7ff; border-radius: 8px; text-align: left; direction: ltr; }
         .session-box textarea { width: 100%; min-height: 100px; margin-top: 10px; font-family: monospace; background: #f4f4f4; border: 1px solid #ddd; padding: 10px; box-sizing: border-box; border-radius: 6px; }
         label { font-weight: bold; color: #555; display: block; margin-bottom: 5px; text-align: right; }
+        .font-options { border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
+        .font-option { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #ddd; cursor: pointer; transition: background-color 0.2s; }
+        .font-option:hover { background-color: #f7f7f7; }
+        .font-option:last-child { border-bottom: none; }
+        .font-option input[type="radio"] { margin-left: 15px; transform: scale(1.2); }
+        .font-option label { display: flex; justify-content: space-between; align-items: center; width: 100%; font-weight: normal; cursor: pointer; }
+        .font-option .preview { font-size: 1.3em; font-weight: bold; direction: ltr; color: #0056b3; }
     </style>
 </head>
 <body>
     <div class="container">
         {% if step == 'GET_PHONE' %}
             <h1>ورود به سلف بات</h1>
-            <p>شماره تلگرام خود را به همراه کد کشور وارد کرده و استایل فونت ساعت را انتخاب کنید.</p>
-            {% if error_message %}
-                <p class="error">{{ error_message }}</p>
-            {% endif %}
+            <p>شماره و استایل فونت مورد نظر خود را انتخاب کنید.</p>
+            {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
             <form action="{{ url_for('login') }}" method="post">
                 <input type="hidden" name="action" value="phone">
                 <div>
-                    <label for="phone">شماره تلفن</label>
+                    <label for="phone">شماره تلفن (با کد کشور)</label>
                     <input type="tel" id="phone" name="phone_number" placeholder="+989123456789" required autofocus>
                 </div>
                 <div>
-                    <label for="font">استایل فونت ساعت</label>
-                    <select id="font" name="font_style">
-                        <option value="stylized">فانتزی (پیش‌فرض)</option>
-                        <option value="bold">ضخیم</option>
-                        <option value="monospace">ماشین تحریر</option>
-                        <option value="normal">معمولی</option>
-                    </select>
+                    <label>استایل فونت ساعت</label>
+                    <div class="font-options">
+                        {% for name, data in font_previews.items() %}
+                        <div class="font-option" onclick="document.getElementById('font-{{ data.style }}').checked = true;">
+                            <input type="radio" name="font_style" value="{{ data.style }}" id="font-{{ data.style }}" {% if loop.first %}checked{% endif %}>
+                            <label for="font-{{ data.style }}">
+                                <span>{{ name }}</span>
+                                <span class="preview">{{ data.preview }}</span>
+                            </label>
+                        </div>
+                        {% endfor %}
+                    </div>
                 </div>
                 <button type="submit">ارسال کد تایید</button>
             </form>
         {% elif step == 'GET_CODE' %}
             <h1>کد تایید</h1>
-            <p>کدی به حساب تلگرام با شماره <strong>{{ phone_number }}</strong> ارسال شد. لطفاً آن را وارد کنید.</p>
+            <p>کدی به حساب تلگرام با شماره <strong>{{ phone_number }}</strong> ارسال شد.</p>
             {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
             <form action="{{ url_for('login') }}" method="post">
                 <input type="hidden" name="action" value="code">
@@ -100,7 +124,7 @@ HTML_TEMPLATE = """
             </form>
         {% elif step == 'GET_PASSWORD' %}
             <h1>رمز دو مرحله‌ای</h1>
-            <p>حساب شما نیاز به رمز تایید دو مرحله‌ای دارد. لطفاً آن را وارد کنید.</p>
+            <p>حساب شما نیاز به رمز تایید دو مرحله‌ای دارد.</p>
             {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
             <form action="{{ url_for('login') }}" method="post">
                 <input type="hidden" name="action" value="password">
@@ -113,45 +137,24 @@ HTML_TEMPLATE = """
             <div class="session-box">
                 <textarea readonly onclick="this.select()">{{ session_string }}</textarea>
             </div>
-             <form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">ورود با شماره جدید</button></form>
+            <p style="margin-top: 10px;">فراموش نکنید که متغیر <code>FONT_STYLE</code> را نیز با مقدار <strong>{{ font_style }}</strong> در هاست خود تنظیم کنید.</p>
+            <form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">ورود با شماره جدید</button></form>
         {% endif %}
     </div>
 </body>
 </html>
 """
 
-# --- توابع کمکی ---
-def stylize_time(time_str: str, style: str) -> str:
-    font_map = FONT_STYLES.get(style, FONT_STYLES["stylized"])
-    return ''.join(font_map.get(char, char) for char in time_str)
-
-async def update_name_once(client: Client, font_style: str):
-    try:
-        me = await client.get_me()
-        original_name = me.first_name
-        parts = original_name.rsplit(' ', 1)
-        if len(parts) > 1 and ':' in parts[-1] and any(char.isdigit() for char in parts[-1]):
-            original_name = parts[0]
-        tehran_time = datetime.now(TEHRAN_TIMEZONE).strftime("%H:%M")
-        stylized_time = stylize_time(tehran_time, font_style)
-        new_name = f"{original_name} {stylized_time}"
-        await client.update_profile(first_name=new_name)
-        logging.info(f"نام کاربر '{original_name}' به صورت موقت آپدیت شد.")
-    except Exception as e:
-        logging.error(f"خطا در آپدیت موقت نام: {e}")
-
 async def cleanup_client(phone):
-    """کلاینت را قطع و از دیکشنری حذف می‌کند."""
     client = ACTIVE_CLIENTS.pop(phone, None)
     if client and client.is_connected:
         await client.disconnect()
-        logging.info(f"کلاینت برای شماره {phone} پاکسازی شد.")
 
-# --- مسیرهای وب (Routes) ---
 @app_flask.route('/')
 def home():
     session.clear()
-    return render_template_string(HTML_TEMPLATE, step='GET_PHONE')
+    font_previews = get_font_previews()
+    return render_template_string(HTML_TEMPLATE, step='GET_PHONE', font_previews=font_previews)
 
 @app_flask.route('/login', methods=['POST'])
 def login():
@@ -181,18 +184,16 @@ def login():
             code = request.form.get('code')
             p_hash = session.get('phone_code_hash')
             client = ACTIVE_CLIENTS.get(phone)
-            if not client: raise Exception("Session expired, please try again.")
+            if not client: raise Exception("Session expired, please start over.")
 
             async def sign_in_task():
                 try:
                     await client.sign_in(phone, p_hash, code)
-                    session_str = await client.export_session_string()
-                    await update_name_once(client, session.get('font_style'))
-                    return session_str, None
+                    return await client.export_session_string(), None
                 except SessionPasswordNeeded:
                     return None, 'GET_PASSWORD'
                 finally:
-                    if client.is_connected and 'GET_PASSWORD' not in locals():
+                    if 'GET_PASSWORD' not in locals():
                         await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(sign_in_task(), EVENT_LOOP)
@@ -201,53 +202,48 @@ def login():
             if next_step:
                 return render_template_string(HTML_TEMPLATE, step=next_step)
             else:
-                return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string)
+                return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
 
         elif action == 'password':
             password = request.form.get('password')
             client = ACTIVE_CLIENTS.get(phone)
-            if not client: raise Exception("Session expired, please try again.")
+            if not client: raise Exception("Session expired, please start over.")
 
             async def check_password_task():
                 try:
                     await client.check_password(password)
-                    session_str = await client.export_session_string()
-                    await update_name_once(client, session.get('font_style'))
-                    return session_str
+                    return await client.export_session_string()
                 finally:
                     await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(check_password_task(), EVENT_LOOP)
             session_string = future.result(timeout=45)
-            return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string)
+            return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
             
     except Exception as e:
         if phone:
             asyncio.run_coroutine_threadsafe(cleanup_client(phone), EVENT_LOOP)
-        
-        logging.error(f"خطا در مرحله '{action}': {e}", exc_info=True)
-        error_msg, current_step = "یک خطای پیش‌بینی نشده رخ داد. لطفا دوباره تلاش کنید.", 'GET_PHONE'
+        logging.error(f"Error during '{action}': {e}", exc_info=True)
+        error_msg, current_step = "An unexpected error occurred. Please try again.", 'GET_PHONE'
         
         if isinstance(e, PhoneCodeInvalid):
-            error_msg, current_step = "کد تایید وارد شده اشتباه است.", 'GET_CODE'
+            error_msg, current_step = "The confirmation code is invalid.", 'GET_CODE'
         elif isinstance(e, PasswordHashInvalid):
-            error_msg, current_step = "رمز عبور دو مرحله‌ای اشتباه است.", 'GET_PASSWORD'
+            error_msg, current_step = "The 2FA password is incorrect.", 'GET_PASSWORD'
         elif isinstance(e, PhoneNumberInvalid):
-            error_msg = "شماره تلفن وارد شده نامعتبر است. فرمت صحیح را (+98...) بررسی کنید."
+            error_msg = "The phone number is invalid. Check the format (+...)."
         elif isinstance(e, PhoneCodeExpired):
-            error_msg = "کد تایید منقضی شده است. لطفاً از ابتدا شروع کنید."
+            error_msg = "The confirmation code has expired. Please start over."
         elif isinstance(e, FloodWait):
-            error_msg = f"به دلیل تلاش زیاد، تلگرام شما را محدود کرده است. لطفاً {e.value} ثانیه دیگر دوباره تلاش کنید."
-        elif isinstance(e, ApiIdInvalid):
-            error_msg = "API ID یا API Hash نامعتبر است (خطای سمت سرور)."
+            error_msg = f"Too many attempts. Please wait for {e.value} seconds."
         
+        font_previews = get_font_previews()
         if current_step == 'GET_PHONE': session.clear()
         
-        return render_template_string(HTML_TEMPLATE, step=current_step, error_message=error_msg, phone_number=phone)
+        return render_template_string(HTML_TEMPLATE, step=current_step, error_message=error_msg, phone_number=phone, font_previews=font_previews)
     
     return redirect(url_for('home'))
 
-# --- اجرای برنامه ---
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host='0.0.0.0', port=port)
@@ -262,10 +258,7 @@ def run_asyncio_loop():
 
 if __name__ == "__main__":
     logging.info("در حال اجرای برنامه...")
-    
     loop_thread = Thread(target=run_asyncio_loop, daemon=True)
     loop_thread.start()
-    logging.info("✅ حلقه رویداد AsyncIO در پس‌زمینه اجرا شد.")
-    
     run_flask()
 

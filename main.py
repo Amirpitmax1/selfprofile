@@ -4,7 +4,7 @@ import logging
 from pyrogram import Client
 from pyrogram.errors import (
     FloodWait, SessionPasswordNeeded, PhoneCodeInvalid,
-    PasswordHashInvalid,
+    PasswordHashInvalid, PhoneNumberInvalid, PhoneCodeExpired, ApiIdInvalid
 )
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -23,8 +23,7 @@ API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"  # ❗️ این قسمت را ب�
 # --- متغیرهای برنامه ---
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 app_flask = Flask(__name__)
-# برای استفاده از session در فلاسک، یک کلید امنیتی لازم است
-app_flask.secret_key = os.urandom(24)
+app_flask.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
 
 # --- دیکشنری فونت‌ها برای ساعت ---
 FONT_STYLES = {
@@ -35,9 +34,9 @@ FONT_STYLES = {
 }
 
 # --- مدیریت وضعیت برنامه ---
-# دیگر از APP_STATE سراسری استفاده نمی‌کنیم و به جای آن از session فلاسک بهره می‌بریم
-# این کار باعث می‌شود هر کاربر وضعیت لاگین خودش را داشته باشد
 EVENT_LOOP = asyncio.new_event_loop()
+# دیکشنری برای نگهداری کلاینت‌های فعال در حین فرآیند ورود
+ACTIVE_CLIENTS = {}
 
 # --- قالب‌های HTML ---
 HTML_TEMPLATE = """
@@ -59,7 +58,7 @@ HTML_TEMPLATE = """
         select { text-align: right; direction: rtl; }
         button { padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; font-family: 'Vazirmatn', sans-serif; }
         button:hover { background-color: #0056b3; }
-        .error { color: #d93025; margin-top: 15px; font-weight: bold; }
+        .error { color: #d93025; margin-top: 15px; font-weight: bold; background-color: #fce8e6; padding: 10px; border-radius: 8px; border: 1px solid #f8a9a0; }
         .success { color: #1e8e3e; font-size: 1.2em; font-weight: bold; }
         .info { color: #555; font-style: italic; }
         .session-box { margin-top: 25px; padding: 15px; background-color: #e9f5ff; border: 1px solid #b3d7ff; border-radius: 8px; text-align: left; direction: ltr; }
@@ -73,6 +72,9 @@ HTML_TEMPLATE = """
         {% if step == 'GET_PHONE' %}
             <h1>ورود به سلف بات</h1>
             <p>شماره تلگرام خود را به همراه کد کشور وارد کرده و استایل فونت ساعت را انتخاب کنید.</p>
+            {% if error_message %}
+                <p class="error">{{ error_message }}</p>
+            {% endif %}
             <form action="{{ url_for('login') }}" method="post">
                 <input type="hidden" name="action" value="phone">
                 <div>
@@ -93,6 +95,7 @@ HTML_TEMPLATE = """
         {% elif step == 'GET_CODE' %}
             <h1>کد تایید</h1>
             <p>کدی به حساب تلگرام با شماره <strong>{{ phone_number }}</strong> ارسال شد. لطفاً آن را وارد کنید.</p>
+            {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
             <form action="{{ url_for('login') }}" method="post">
                 <input type="hidden" name="action" value="code">
                 <input type="text" name="code" placeholder="Verification Code" required>
@@ -101,6 +104,7 @@ HTML_TEMPLATE = """
         {% elif step == 'GET_PASSWORD' %}
             <h1>رمز دو مرحله‌ای</h1>
             <p>حساب شما نیاز به رمز تایید دو مرحله‌ای دارد. لطفاً آن را وارد کنید.</p>
+            {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
             <form action="{{ url_for('login') }}" method="post">
                 <input type="hidden" name="action" value="password">
                 <input type="password" name="password" placeholder="2FA Password" required>
@@ -116,10 +120,6 @@ HTML_TEMPLATE = """
             </div>
              <form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">ورود با شماره جدید</button></form>
         {% endif %}
-
-        {% if error_message %}
-            <p class="error">{{ error_message }}</p>
-        {% endif %}
     </div>
 </body>
 </html>
@@ -131,40 +131,37 @@ def stylize_time(time_str: str, style: str) -> str:
     return ''.join(font_map.get(char, char) for char in time_str)
 
 async def update_name_once(client: Client, font_style: str):
-    """نام کاربر را فقط یک بار برای نمایش عملکرد ربات آپدیت می‌کند."""
     try:
         me = await client.get_me()
         original_name = me.first_name
-        
-        # حذف ساعت قبلی اگر وجود داشته باشد
         parts = original_name.rsplit(' ', 1)
-        if len(parts) > 1:
-            last_part = parts[-1]
-            # یک بررسی ساده برای اینکه آیا بخش آخر شبیه ساعت است یا نه
-            if ':' in last_part and any(char.isdigit() for char in last_part):
-                 original_name = parts[0]
-        
+        if len(parts) > 1 and ':' in parts[-1] and any(char.isdigit() for char in parts[-1]):
+            original_name = parts[0]
         tehran_time = datetime.now(TEHRAN_TIMEZONE).strftime("%H:%M")
         stylized_time = stylize_time(tehran_time, font_style)
-        
         new_name = f"{original_name} {stylized_time}"
         await client.update_profile(first_name=new_name)
         logging.info(f"نام کاربر '{original_name}' به صورت موقت آپدیت شد.")
-        return original_name
     except Exception as e:
         logging.error(f"خطا در آپدیت موقت نام: {e}")
-        return "کاربر"
 
+async def cleanup_client(phone):
+    """کلاینت را قطع و از دیکشنری حذف می‌کند."""
+    client = ACTIVE_CLIENTS.pop(phone, None)
+    if client and client.is_connected:
+        await client.disconnect()
+        logging.info(f"کلاینت برای شماره {phone} پاکسازی شد.")
 
 # --- مسیرهای وب (Routes) ---
 @app_flask.route('/')
 def home():
-    session.clear() # با هر بار باز کردن صفحه اصلی، اطلاعات قبلی پاک می‌شود
+    session.clear()
     return render_template_string(HTML_TEMPLATE, step='GET_PHONE')
 
 @app_flask.route('/login', methods=['POST'])
 def login():
     action = request.form.get('action')
+    phone = session.get('phone_number')
     
     try:
         if action == 'phone':
@@ -174,37 +171,41 @@ def login():
             session['font_style'] = font
             
             async def send_code_task():
-                # برای هر کاربر یک کلاینت جدید در حافظه ساخته می‌شود
+                # اگر کلاینت قدیمی وجود داشت، پاکسازی کن
+                await cleanup_client(phone)
+                
                 client = Client(f"user_{phone}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+                ACTIVE_CLIENTS[phone] = client
                 await client.connect()
                 sent_code = await client.send_code(phone)
                 session['phone_code_hash'] = sent_code.phone_code_hash
-                await client.disconnect()
+                # در این مرحله کلاینت قطع نمی‌شود
 
             future = asyncio.run_coroutine_threadsafe(send_code_task(), EVENT_LOOP)
-            future.result(timeout=30)
+            future.result(timeout=45)
             return render_template_string(HTML_TEMPLATE, step='GET_CODE', phone_number=phone)
 
         elif action == 'code':
             code = request.form.get('code')
-            phone = session.get('phone_number')
             p_hash = session.get('phone_code_hash')
+            client = ACTIVE_CLIENTS.get(phone)
+            if not client: raise Exception("Session expired, please try again.")
 
             async def sign_in_task():
-                client = Client(f"user_{phone}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
-                await client.connect()
                 try:
                     await client.sign_in(phone, p_hash, code)
                     session_str = await client.export_session_string()
                     await update_name_once(client, session.get('font_style'))
-                    await client.disconnect()
                     return session_str, None
                 except SessionPasswordNeeded:
-                    await client.disconnect()
                     return None, 'GET_PASSWORD'
-            
+                finally:
+                    # فقط در صورتی که موفق شویم یا خطا بخوریم قطع می‌شویم
+                    if client.is_connected and 'GET_PASSWORD' not in locals():
+                        await cleanup_client(phone)
+
             future = asyncio.run_coroutine_threadsafe(sign_in_task(), EVENT_LOOP)
-            session_string, next_step = future.result(timeout=30)
+            session_string, next_step = future.result(timeout=45)
 
             if next_step:
                 return render_template_string(HTML_TEMPLATE, step=next_step)
@@ -213,29 +214,50 @@ def login():
 
         elif action == 'password':
             password = request.form.get('password')
-            phone = session.get('phone_number')
+            client = ACTIVE_CLIENTS.get(phone)
+            if not client: raise Exception("Session expired, please try again.")
 
             async def check_password_task():
-                client = Client(f"user_{phone}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
-                await client.connect()
-                await client.check_password(password)
-                session_str = await client.export_session_string()
-                await update_name_once(client, session.get('font_style'))
-                await client.disconnect()
-                return session_str
+                try:
+                    await client.check_password(password)
+                    session_str = await client.export_session_string()
+                    await update_name_once(client, session.get('font_style'))
+                    return session_str
+                finally:
+                    await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(check_password_task(), EVENT_LOOP)
-            session_string = future.result(timeout=30)
+            session_string = future.result(timeout=45)
             return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string)
             
     except Exception as e:
+        # پاکسازی کلاینت در صورت بروز هرگونه خطا
+        if phone:
+            asyncio.run_coroutine_threadsafe(cleanup_client(phone), EVENT_LOOP)
+            
         logging.error(f"خطا در مرحله '{action}': {e}", exc_info=True)
+        # --- سیستم خطایابی بهبود یافته ---
         error_msg = "یک خطای پیش‌بینی نشده رخ داد. لطفا دوباره تلاش کنید."
-        if isinstance(e, PhoneCodeInvalid): error_msg = "کد وارد شده اشتباه است."
-        elif isinstance(e, PasswordHashInvalid): error_msg = "رمز عبور دو مرحله‌ای اشتباه است."
+        current_step = 'GET_PHONE'
         
-        session.clear()
-        return render_template_string(HTML_TEMPLATE, step='GET_PHONE', error_message=error_msg)
+        if isinstance(e, PhoneCodeInvalid):
+            error_msg = "کد تایید وارد شده اشتباه است."
+            current_step = 'GET_CODE'
+        elif isinstance(e, PasswordHashInvalid):
+            error_msg = "رمز عبور دو مرحله‌ای اشتباه است."
+            current_step = 'GET_PASSWORD'
+        elif isinstance(e, PhoneNumberInvalid):
+            error_msg = "شماره تلفن وارد شده نامعتبر است. فرمت صحیح را (+98...) بررسی کنید."
+        elif isinstance(e, PhoneCodeExpired):
+            error_msg = "کد تایید منقضی شده است. لطفاً از ابتدا شروع کنید."
+        elif isinstance(e, FloodWait):
+            error_msg = f"به دلیل تلاش زیاد، تلگرام شما را محدود کرده است. لطفاً {e.value} ثانیه دیگر دوباره تلاش کنید."
+        elif isinstance(e, ApiIdInvalid):
+            error_msg = "API ID یا API Hash نامعتبر است (خطای سمت سرور)."
+        
+        if current_step == 'GET_PHONE': session.clear()
+        
+        return render_template_string(HTML_TEMPLATE, step=current_step, error_message=error_msg, phone_number=phone)
     
     return redirect(url_for('home'))
 
@@ -244,18 +266,20 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host='0.0.0.0', port=port)
 
-if __name__ == "__main__":
-    logging.info("در حال اجرای برنامه...")
-    
-    flask_thread = Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    logging.info("✅ وب سرور برای تولید Session String اجرا شد.")
-    
-    # حلقه رویداد اصلی را برای کارهای پس‌زمینه اجرا می‌کنیم
+def run_asyncio_loop():
     try:
         EVENT_LOOP.run_forever()
     except (KeyboardInterrupt, SystemExit):
-        logging.info("در حال متوقف کردن برنامه...")
+        pass
     finally:
         EVENT_LOOP.close()
+
+if __name__ == "__main__":
+    logging.info("در حال اجرای برنامه...")
+    
+    loop_thread = Thread(target=run_asyncio_loop, daemon=True)
+    loop_thread.start()
+    logging.info("✅ حلقه رویداد AsyncIO در پس‌زمینه اجرا شد.")
+    
+    run_flask()
 

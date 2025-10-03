@@ -25,17 +25,16 @@ TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 app_flask = Flask(__name__)
 app_flask.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
 
-# --- دیکشنری فونت‌ها برای ساعت ---
+# --- دیکشنری فونت‌ها برای ساعت (فاصله اصلاح شد) ---
 FONT_STYLES = {
-    "normal": {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
-    "stylized": {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵',':':' : '},
+    "stylized": {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵',':':':'},
     "bold": {'0':'𝟎','1':'𝟏','2':'𝟐','3':'𝟑','4':'𝟒','5':'𝟓','6':'𝟔','7':'𝟕','8':'𝟖','9':'𝟗',':':':'},
     "monospace": {'0':'𝟶','1':'𝟷','2':'𝟸','3':'𝟹','4':'𝟺','5':'𝟻','6':'𝟼','7':'𝟽','8':'𝟾','9':'𝟿',':':':'},
+    "normal": {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
 }
 
 # --- مدیریت وضعیت برنامه ---
 EVENT_LOOP = asyncio.new_event_loop()
-# دیکشنری برای نگهداری کلاینت‌های فعال در حین فرآیند ورود
 ACTIVE_CLIENTS = {}
 
 # --- قالب‌های HTML ---
@@ -60,9 +59,7 @@ HTML_TEMPLATE = """
         button:hover { background-color: #0056b3; }
         .error { color: #d93025; margin-top: 15px; font-weight: bold; background-color: #fce8e6; padding: 10px; border-radius: 8px; border: 1px solid #f8a9a0; }
         .success { color: #1e8e3e; font-size: 1.2em; font-weight: bold; }
-        .info { color: #555; font-style: italic; }
         .session-box { margin-top: 25px; padding: 15px; background-color: #e9f5ff; border: 1px solid #b3d7ff; border-radius: 8px; text-align: left; direction: ltr; }
-        .session-box strong { color: #d93025; }
         .session-box textarea { width: 100%; min-height: 100px; margin-top: 10px; font-family: monospace; background: #f4f4f4; border: 1px solid #ddd; padding: 10px; box-sizing: border-box; border-radius: 6px; }
         label { font-weight: bold; color: #555; display: block; margin-bottom: 5px; text-align: right; }
     </style>
@@ -85,9 +82,9 @@ HTML_TEMPLATE = """
                     <label for="font">استایل فونت ساعت</label>
                     <select id="font" name="font_style">
                         <option value="stylized">فانتزی (پیش‌فرض)</option>
-                        <option value="normal">معمولی</option>
                         <option value="bold">ضخیم</option>
                         <option value="monospace">ماشین تحریر</option>
+                        <option value="normal">معمولی</option>
                     </select>
                 </div>
                 <button type="submit">ارسال کد تایید</button>
@@ -111,12 +108,10 @@ HTML_TEMPLATE = """
                 <button type="submit">ورود</button>
             </form>
         {% elif step == 'SHOW_SESSION' %}
-            <h1 class="success">✅ ورود موفق!</h1>
-            <p>ربات برای لحظاتی فعال شد تا عملکرد آن را ببینید. برای فعال‌سازی دائمی، مراحل زیر را دنبال کنید.</p>
+            <h1 class="success">✅ فعال شد با موفقیت!</h1>
+            <p>برای روشن ماندن دائمی ربات، کد زیر را در متغیر <code>SESSION_STRING</code> هاست خود ذخیره کنید.</p>
             <div class="session-box">
-                <p><strong>۱. این Session String را کپی کنید:</strong></p>
                 <textarea readonly onclick="this.select()">{{ session_string }}</textarea>
-                <p style="margin-top: 15px;"><strong>۲. این رشته را در متغیر محیطی (Environment Variable) به نام <code>SESSION_STRING</code> در هاست خود (مثلا Render) ذخیره کنید و سرویس را ری‌استارت کنید.</strong></p>
             </div>
              <form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">ورود با شماره جدید</button></form>
         {% endif %}
@@ -171,15 +166,12 @@ def login():
             session['font_style'] = font
             
             async def send_code_task():
-                # اگر کلاینت قدیمی وجود داشت، پاکسازی کن
                 await cleanup_client(phone)
-                
                 client = Client(f"user_{phone}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
                 ACTIVE_CLIENTS[phone] = client
                 await client.connect()
                 sent_code = await client.send_code(phone)
                 session['phone_code_hash'] = sent_code.phone_code_hash
-                # در این مرحله کلاینت قطع نمی‌شود
 
             future = asyncio.run_coroutine_threadsafe(send_code_task(), EVENT_LOOP)
             future.result(timeout=45)
@@ -200,7 +192,6 @@ def login():
                 except SessionPasswordNeeded:
                     return None, 'GET_PASSWORD'
                 finally:
-                    # فقط در صورتی که موفق شویم یا خطا بخوریم قطع می‌شویم
                     if client.is_connected and 'GET_PASSWORD' not in locals():
                         await cleanup_client(phone)
 
@@ -231,21 +222,16 @@ def login():
             return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string)
             
     except Exception as e:
-        # پاکسازی کلاینت در صورت بروز هرگونه خطا
         if phone:
             asyncio.run_coroutine_threadsafe(cleanup_client(phone), EVENT_LOOP)
-            
+        
         logging.error(f"خطا در مرحله '{action}': {e}", exc_info=True)
-        # --- سیستم خطایابی بهبود یافته ---
-        error_msg = "یک خطای پیش‌بینی نشده رخ داد. لطفا دوباره تلاش کنید."
-        current_step = 'GET_PHONE'
+        error_msg, current_step = "یک خطای پیش‌بینی نشده رخ داد. لطفا دوباره تلاش کنید.", 'GET_PHONE'
         
         if isinstance(e, PhoneCodeInvalid):
-            error_msg = "کد تایید وارد شده اشتباه است."
-            current_step = 'GET_CODE'
+            error_msg, current_step = "کد تایید وارد شده اشتباه است.", 'GET_CODE'
         elif isinstance(e, PasswordHashInvalid):
-            error_msg = "رمز عبور دو مرحله‌ای اشتباه است."
-            current_step = 'GET_PASSWORD'
+            error_msg, current_step = "رمز عبور دو مرحله‌ای اشتباه است.", 'GET_PASSWORD'
         elif isinstance(e, PhoneNumberInvalid):
             error_msg = "شماره تلفن وارد شده نامعتبر است. فرمت صحیح را (+98...) بررسی کنید."
         elif isinstance(e, PhoneCodeExpired):

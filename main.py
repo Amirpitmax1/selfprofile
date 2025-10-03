@@ -10,47 +10,38 @@ from pyrogram.errors import (
     PhoneNumberInvalid,
     PhoneCodeExpired, 
 )
-from datetime import datetime
-from zoneinfo import ZoneInfo
 from flask import Flask, request, render_template_string, redirect, session, url_for
 from threading import Thread
 
-# --- تنظیمات لاگ‌نویسی ---
+# --- Configuration & Setup ---
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
 
-# =======================================================
-# ⚠️ تنظیمات اصلی از متغیرهای محیطی خوانده می‌شود
-# =======================================================
-# API_ID و API_HASH از متغیرهای محیطی خوانده می‌شوند
-API_ID = os.environ.get("API_ID")
-API_HASH = os.environ.get("API_HASH")
+# --- ENVIRONMENT VARIABLES (Mandatory for Pyrogram Client) ---
+# NOTE: These must be set on your hosting platform (Render/etc.)
+# You need to set these in your hosting environment:
+API_ID = os.environ.get("API_ID", "1234567") 
+API_HASH = os.environ.get("API_HASH", "abcdef1234567890abcdef1234567890") 
 
-# بررسی متغیرهای حیاتی
 if not API_ID or not API_HASH:
-    logging.critical("CRITICAL ERROR: API_ID or API_HASH environment variables are not set! Using default test values.")
-    # مقادیر پیش‌فرض برای تست (در محیط واقعی باید از متغیرهای محیطی استفاده شود)
-    API_ID = os.environ.get("API_ID", "24218762")
-    API_HASH = os.environ.get("API_HASH", "19695584ae95ea9bc5e1483e15b486a7")
+    logging.critical("CRITICAL ERROR: API_ID or API_HASH environment variables are not set! Using default placeholders.")
 
-# --- تعریف فونت‌های ساعت ---
+
+# --- Clock Fonts Definitions (Same as before) ---
 CLOCK_FONTS = {
     "1": {"name": "Style 1 (Fullwidth)", "from": '0123456789:', "to": '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟵:'},
     "2": {"name": "Style 2 (Circled)", "from": '0123456789:', "to": '⓪①②③④⑤⑥⑦⑧⑨:'},
-    # کاراکترهای Double Struck
-    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
-    "4": {"name": "Style 4 (Monospace)", "from": '0123456789:', "to": '０１２３４５６７８９:'},
+    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝚠𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
 }
 
-# --- متغیرهای برنامه ---
-TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
+# --- Flask App Initialization and Session Configuration ---
 app_flask = Flask(__name__)
-# ⚠️ کلید امنیتی
-app_flask.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'a_very_secret_and_random_key_for_flask_sessions')
+# ⚠️ This is crucial for session security. Use a long, random key.
+app_flask.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'a_secure_default_key_for_telegram_clock')
 
 
-# --- فیلتر Jinja2 برای پیش‌نمایش فونت ---
+# --- Jinja2 Filter for Font Preview ---
 def jinja_stylize_preview(time_str: str, to_chars: str) -> str:
-    """فیلتر Jinja برای نمایش پیش‌نمایش فونت در قالب."""
+    """Jinja filter to show font preview."""
     from_chars = '0123456789:'
     translation_map = str.maketrans(from_chars, to_chars)
     return time_str.translate(translation_map)
@@ -58,7 +49,7 @@ def jinja_stylize_preview(time_str: str, to_chars: str) -> str:
 app_flask.jinja_env.filters['stylize_preview'] = jinja_stylize_preview
 
 
-# --- قالب‌های HTML ---
+# --- HTML Template (Login Interface) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -80,10 +71,10 @@ HTML_TEMPLATE = """
         button:hover { background-color: #0056b3; }
         .error { color: #d93025; margin-top: 15px; font-weight: bold; background-color: #fbeae5; padding: 10px; border-radius: 8px; border: 1px solid #f5c6cb; }
         .success { color: #1e8e3e; font-size: 1.2em; font-weight: bold; }
-        .info { color: #555; }
         .session-info { margin-top: 25px; padding: 15px; background-color: #e6f7ff; border: 1px solid #91d5ff; border-radius: 8px; text-align: right; }
         .session-info strong { color: #d93025; }
         textarea { width: 100%; height: 120px; direction: ltr; text-align: left; margin-top: 10px; font-family: monospace; border-radius: 8px; border-color: #ccc; padding: 10px; resize: vertical; }
+        .reset-link { font-size: 0.9em; color: #666; margin-top: 15px; display: block; }
     </style>
 </head>
 <body>
@@ -93,7 +84,7 @@ HTML_TEMPLATE = """
             <p>برای نمایش ساعت کنار نام تلگرام خود، وارد شوید.</p>
             <form action="{{ url_for('start_login') }}" method="post">
                 <label for="phone">شماره تلفن (با کد کشور)</label>
-                <input type="tel" id="phone" name="phone_number" placeholder="+989123456789" required autofocus value="{{ phone_number or '' }}">
+                <input type="tel" id="phone" name="phone_number" placeholder="+98..." required autofocus value="{{ phone_number or '' }}">
                                 
                 <label for="font">انتخاب فونت ساعت</label>
                 <select id="font" name="font_key">
@@ -114,7 +105,7 @@ HTML_TEMPLATE = """
                 <input type="text" name="code" placeholder="کد ارسال شده" required autofocus inputmode="numeric">
                 <button type="submit">تایید کد</button>
             </form>
-            <a href="{{ url_for('reset') }}" style="font-size: 0.9em; color: #666; margin-top: 15px; display: block;">تغییر شماره یا تلاش مجدد</a>
+            <a href="{{ url_for('reset') }}" class="reset-link">تغییر شماره یا شروع مجدد</a>
 
         {% elif step == 'PASSWORD' %}
             <h1>مرحله ۲: رمز دو مرحله‌ای</h1>
@@ -123,18 +114,23 @@ HTML_TEMPLATE = """
                 <input type="password" name="password" placeholder="رمز عبور دو مرحله‌ای" required autofocus>
                 <button type="submit">ورود</button>
             </form>
+            <a href="{{ url_for('reset') }}" class="reset-link">شروع مجدد لاگین</a>
 
         {% elif step == 'DONE' %}
-            <h1 class="success">✅ موفقیت آمیز بود!</h1>
-            <p>کلید نشست (Session String) شما با موفقیت ساخته شد. این کلید برای اجرای ربات ضروری است.</p>
+            <h1 class="success">✅ ورود موفقیت آمیز بود!</h1>
+            <p>کلید نشست (Session String) شما ساخته شد. این کلید برای اجرای ربات نهایی ضروری است.</p>
             <div class="session-info">
                 <strong>اقدام نهایی و مهم:</strong>
-                <ol style="padding-right: 20px;">
-                    <li>متن زیر را به طور کامل کپی کنید.</li>
-                    <li>در تنظیمات هاست یا سرور خود (مثلاً Render)، یک متغیر محیطی (Environment Variable) با نام <code>SESSION_STRING</code> بسازید و متن کپی شده را در مقدار آن قرار دهید.</li>
-                    <li>یک متغیر محیطی دیگر با نام <code>FIRST_NAME</code> بسازید و نامی که میخواهید نمایش داده شود را در آن قرار دهید (مثلا <code>FIRST_NAME=Amir</code>).</li>
-                    <li>یک متغیر دیگر با نام <code>FONT_KEY</code> بسازید و مقدار آن را <code>{{ font_key }}</code> قرار دهید تا فونت انتخابی شما اعمال شود.</li>
-                    <li>در نهایت، سرویس خود را ری‌استارت (Restart) کنید.</li>
+                <ol style="padding-right: 20px; text-align: right;">
+                    <li>متن زیر را به طور کامل کپی کنید (Session String).</li>
+                    <li>این کلید و سایر تنظیمات را در هاست خود به عنوان متغیر محیطی برای **فایل `bot_worker.py`** تنظیم کنید:
+                        <ul>
+                            <li>`SESSION_STRING`: (مقدار کپی شده)</li>
+                            <li>`FIRST_NAME`: (نامی که می‌خواهید نمایش داده شود، مثال: `Amir`)</li>
+                            <li>`FONT_KEY`: (مقدار فونت انتخابی شما: `{{ font_key }}`)</li>
+                        </ul>
+                    </li>
+                    <li>سپس، فایل `bot_worker.py` را اجرا کنید.</li>
                 </ol>
             </div>
             <textarea readonly onclick="this.select()">{{ session_string }}</textarea>
@@ -142,67 +138,69 @@ HTML_TEMPLATE = """
         {% endif %}
 
         {% if error_message %}
-            <p class="error">{{ error_message }}</p>
+            <p class="error">**خطا:** {{ error_message }}</p>
         {% endif %}
     </div>
 </body>
 </html>
 """
 
-# --- توابع ناهمگام برای کار با Pyrogram ---
-async def send_verification_code(phone_number):
-    """
-    یک کلاینت موقت برای ارسال کد تایید ایجاد می‌کند. Pyrogram خودکار بهترین DC را پیدا می‌کند.
-    """
-    client = Client(
-        name=str(phone_number), 
-        api_id=API_ID, 
-        api_hash=API_HASH, 
-        in_memory=True, 
-        phone_number=phone_number, 
-    )
+# =======================================================
+# UTILITY FUNCTION: Running Async Pyrogram code in Flask's Sync threads
+# =======================================================
+def run_async_in_sync(coroutine):
+    """Run a Pyrogram async function in a separate event loop."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coroutine)
+    except Exception as e:
+        logging.error(f"Async execution failed: {type(e).__name__} - {e}", exc_info=True) 
+        return {"success": False, "error": f"Internal System Error: {type(e).__name__}."}
 
+
+# =======================================================
+# PYROGRAM ASYNC CORE FUNCTIONS
+# =======================================================
+
+async def send_verification_code(phone_number: str):
+    """Creates a temporary client and sends the verification code."""
+    client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH, in_memory=True)
     try:
         await client.connect()
         sent_code = await client.send_code(phone_number)
         await client.disconnect()
         return {"success": True, "phone_code_hash": sent_code.phone_code_hash}
-    except (PhoneNumberInvalid, TypeError) as e:
-        logging.error(f"Invalid phone number provided: {e}")
+    except PhoneNumberInvalid as e:
         await client.disconnect()
         return {"success": False, "error": "شماره تلفن وارد شده نامعتبر است. لطفاً با کد کشور (مثال: +98...) وارد کنید."}
     except FloodWait as e:
-        logging.warning(f"Flood wait for {e.value} seconds.")
         await client.disconnect()
-        return {"success": False, "error": f"تلگرام شما را به دلیل درخواست‌های زیاد موقتاً محدود کرده است. لطفاً {e.value} ثانیه دیگر دوباره تلاش کنید."}
+        return {"success": False, "error": f"تلگرام شما را موقتاً محدود کرده است. لطفاً {e.value} ثانیه دیگر تلاش کنید."}
     except Exception as e:
-        error_type = type(e).__name__
-        logging.error(f"An unexpected error occurred during send_code: {error_type} - {e}", exc_info=True)
         await client.disconnect()
-        detailed_error = f"خطای پیش‌بینی نشده‌ای هنگام ارسال کد رخ داد. (نوع خطا: {error_type})"
-        if error_type in ["ApiIdInvalid", "ApiKeyInvalid"]:
-            detailed_error += " لطفاً مطمئن شوید که API_ID و API_HASH به درستی به عنوان متغیرهای محیطی تنظیم شده‌اند."
-        return {"success": False, "error": detailed_error}
+        return {"success": False, "error": f"خطای ارسال کد: {type(e).__name__}."}
 
 
-async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=None):
-    """
-    با استفاده از اطلاعات کاربر، وارد حساب شده و Session String را برمی‌گرداند.
-    """
+async def sign_in_and_get_session(phone_number: str, phone_code_hash: str, code: str, password: str = None):
+    """Logs in with code and/or password and returns the Session String."""
     client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH, in_memory=True)
     try:
         await client.connect()
         
-        # تلاش برای ورود با کد
+        # 1. Attempt Sign In
         try:
-            await client.sign_in(phone_number, phone_code_hash, code)
+            if not password:
+                await client.sign_in(phone_number, phone_code_hash, code)
         except SessionPasswordNeeded:
             if not password:
                 await client.disconnect()
                 return {"success": False, "needs_password": True}
-            # اگر رمز عبور ارائه شده بود، آن را چک می‌کنیم
+            
+            # If 2FA is needed and password is provided, check it
             await client.check_password(password)
 
+        # 2. Login Successful
         session_string = await client.export_session_string()
         await client.disconnect()
         return {"success": True, "session_string": session_string}
@@ -210,60 +208,30 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
     except PhoneCodeInvalid:
         await client.disconnect()
         return {"success": False, "error": "کد تایید وارد شده اشتباه است."}
-    
-    # مدیریت خطای منقضی شدن کد 
-    except PhoneCodeExpired: 
-        await client.disconnect()
-        logging.error("PhoneCodeExpired: The user took too long to enter the code or the key/hash is restricted.")
-        # پیام خطا را کمی دقیق‌تر می‌کنیم تا کاربر بداند باید فرآیند را از نو شروع کند.
-        # توجه: این پیام خطا در تابع submit_code باعث ریست کامل خواهد شد.
-        return {"success": False, "error": "کد تایید منقضی شده است. زمان وارد کردن کد تمام شده. لطفاً مجدداً شروع به کار کنید."}
-        
     except PasswordHashInvalid:
         await client.disconnect()
         return {"success": False, "error": "رمز عبور دو مرحله‌ای اشتباه است.", "needs_password": True}
-    except Exception as e:
-        error_type = type(e).__name__
-        logging.error(f"An unexpected error occurred during sign_in: {error_type} - {e}", exc_info=True)
+    except PhoneCodeExpired:
         await client.disconnect()
-        
-        detailed_error = f"خطای پیش‌بینی نشده‌ای در هنگام ورود رخ داد. (نوع خطا: {error_type})"
-        
-        if error_type in ["ApiIdInvalid", "ApiKeyInvalid"]:
-            detailed_error += " لطفاً مطمئن شوید که API_ID و API_HASH به درستی به عنوان متغیرهای محیطی تنظیم شده‌اند."
-        elif "Telegram is having internal issues" in str(e):
-            detailed_error = "تلگرام در حال حاضر با مشکلات داخلی مواجه است. لطفاً چند دقیقه دیگر دوباره تلاش کنید."
-
-        return {"success": False, "error": detailed_error}
-
-# =======================================================
-# تابع کمکی برای اجرای کدهای ناهمگام (Async) در توابع همگام (Sync)
-# =======================================================
-def run_async_in_sync(coroutine):
-    """
-    اجرای یک Coroutine در یک حلقه رویداد جدید برای جلوگیری از خطای RuntimeError
-    هنگام استفاده از asyncio.run در محیط‌های چندرشته‌ای.
-    """
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(coroutine)
+        # This error triggers a full reset in the Flask route
+        return {"success": False, "error": "کد تایید منقضی شده است. باید از ابتدا شروع کنید."}
     except Exception as e:
-        # تغییر: ثبت کامل traceback برای تشخیص خطای سیستمی واقعی
-        logging.error(f"Async execution failed: {e}", exc_info=True) 
-        return {"success": False, "error": "خطای سیستمی در اجرای فرآیند تلگرام رخ داد. لطفاً لاگ‌های سرور (Render) را برای جزئیات بررسی کنید."}
+        await client.disconnect()
+        return {"success": False, "error": f"خطای نامشخص در ورود: {type(e).__name__}"}
 
+# =======================================================
+# FLASK ROUTES (Synchronous)
+# =======================================================
 
-# --- مسیرهای Flask ---
 @app_flask.route('/')
 def home():
-    """صفحه اصلی را بر اساس وضعیت جلسه کاربر نمایش می‌دهد."""
+    """Displays the main page based on the user's session state."""
     step = session.get('login_step', 'START')
     return render_template_string(
         HTML_TEMPLATE,
         step=step,
         phone_number=session.get('phone_number'),
-        error_message=session.pop('error_message', None), # خطا را فقط یک بار نمایش بده
+        error_message=session.pop('error_message', None),
         session_string=session.get('session_string'),
         clock_fonts=CLOCK_FONTS,
         selected_font_key=session.get('font_key', '1'),
@@ -272,42 +240,41 @@ def home():
 
 @app_flask.route('/start-login', methods=['POST'])
 def start_login():
-    """شماره تلفن و فونت را از کاربر دریافت کرده و کد تایید ارسال می‌کند."""
+    """Receives phone number and font, sends the verification code."""
     phone = request.form.get('phone_number')
     font_key = request.form.get('font_key', '1')
 
-    if not phone:
-        session['error_message'] = "وارد کردن شماره تلفن الزامی است."
+    if not phone or not phone.startswith('+'):
+        session['error_message'] = "شماره تلفن باید وارد شود و شامل کد کشور (مثال: +98) باشد."
+        session['login_step'] = 'START'
         return redirect(url_for('home'))
 
     session['phone_number'] = phone
     session['font_key'] = font_key
     
-    # اجرای تابع ناهمگام برای ارسال کد (با استفاده از تابع کمکی جدید)
     result = run_async_in_sync(send_verification_code(phone))
 
     if result["success"]:
         session['phone_code_hash'] = result['phone_code_hash']
         session['login_step'] = 'CODE'
     else:
-        # اگر خطای سیستمی رخ داده باشد، آن را نمایش می‌دهیم
-        session['error_message'] = result.get('error', 'خطای نامشخص.')
+        session['error_message'] = result.get('error', 'خطای نامشخص در ارسال کد.')
         session['login_step'] = 'START'
         
     return redirect(url_for('home'))
 
 @app_flask.route('/submit-code', methods=['POST'])
 def submit_code():
-    """کد تایید را دریافت و بررسی می‌کند."""
+    """Receives and validates the verification code."""
     code = request.form.get('code')
     phone = session.get('phone_number')
     p_hash = session.get('phone_code_hash')
 
     if not all([code, phone, p_hash]):
-        session['error_message'] = "اطلاعات جلسه ناقص است. لطفاً از ابتدا شروع کنید."
+        session['error_message'] = "اطلاعات جلسه ناقص است یا کد تایید منقضی شده. لطفاً از ابتدا شروع کنید."
         return redirect(url_for('reset'))
 
-    session['verification_code'] = code # کد را برای مرحله رمز عبور ذخیره می‌کنیم
+    session['verification_code'] = code 
 
     result = run_async_in_sync(sign_in_and_get_session(phone, p_hash, code))
 
@@ -317,18 +284,15 @@ def submit_code():
     elif result.get("needs_password"):
         session['login_step'] = 'PASSWORD'
     else:
-        # 💡 اصلاح منطق مدیریت خطا:
-        # تنها اگر خطا صراحتاً کد تایید اشتباه (PhoneCodeInvalid) باشد، کاربر می‌تواند مجدداً تلاش کند.
-        # برای PhoneCodeExpired و هر خطای نامشخص دیگر، کل فرآیند را ریست می‌کنیم.
-        error_message = result.get('error')
+        error_message = result.get('error', 'خطای نامشخص.')
         session['error_message'] = error_message
 
-        # اگر خطا صراحتاً PhoneCodeInvalid باشد (کد اشتباه است)، کاربر می‌تواند دوباره تلاش کند.
-        if "کد تایید وارد شده اشتباه است." in error_message:
+        # If it's a simple wrong code error, stay on CODE step
+        if "کد تایید وارد شده اشتباه است" in error_message:
              session['login_step'] = 'CODE' 
         else:
-             # برای PhoneCodeExpired و خطاهای عمومی، کل فرآیند را ریست می‌کنیم.
-             logging.warning(f"Non-retryable error during sign-in: {error_message}. Resetting session.")
+             # For expired code or fatal errors, reset completely
+             logging.warning(f"Fatal error during sign-in: {error_message}. Resetting session.")
              return redirect(url_for('reset'))
 
     return redirect(url_for('home'))
@@ -336,7 +300,7 @@ def submit_code():
 
 @app_flask.route('/submit-password', methods=['POST'])
 def submit_password():
-    """رمز دو مرحله‌ای را دریافت و لاگین را تکمیل می‌کند."""
+    """Receives the 2FA password and completes the login."""
     password = request.form.get('password')
     phone = session.get('phone_number')
     p_hash = session.get('phone_code_hash')
@@ -353,13 +317,13 @@ def submit_password():
         session['login_step'] = 'DONE'
     else:
         session['error_message'] = result.get('error')
-        # اگر رمز اشتباه بود، به همان مرحله رمز برمی‌گردیم
+        
+        # If password was wrong, stay on PASSWORD step
         if result.get("needs_password"):
             session['login_step'] = 'PASSWORD'
-        else: # اگر خطای دیگری بود به مرحله کد برمی‌گردیم
-            # در صورت خطاهای عمومی غیرمرتبط با رمز عبور (مثل خطای شبکه یا انقضای کد در این مرحله)،
-            # کاربر را به ابتدای فرآیند لاگین برمی‌گردانیم تا کد تایید جدید دریافت کند.
-            logging.warning(f"Login failed after code entry with non-password error: {session['error_message']}. Resetting.")
+        else:
+            # Fatal error, reset completely
+            logging.warning(f"Fatal error during 2FA: {session['error_message']}. Resetting session.")
             return redirect(url_for('reset'))
 
     return redirect(url_for('home'))
@@ -367,84 +331,13 @@ def submit_password():
 
 @app_flask.route('/reset')
 def reset():
-    """جلسه کاربر را پاک کرده و به صفحه شروع برمی‌گرداند."""
+    """Clears the user session and returns to the start page."""
     session.clear()
+    session['error_message'] = "فرآیند ورود ریست شد. لطفاً دوباره تلاش کنید."
     return redirect(url_for('home'))
 
 
-# =======================================================
-# بخش اجرای ربات اصلی (وقتی Session String تنظیم شده باشد)
-# =======================================================
-async def update_name_task(client: Client, first_name: str, font_key: str):
-    """تسک اصلی که نام را در تلگرام به‌روزرسانی می‌کند."""
-    font_data = CLOCK_FONTS.get(font_key, CLOCK_FONTS["1"])
-    font_map = str.maketrans(font_data["from"], font_data["to"])
-    logging.info(f"Update name task started. Display name: '{first_name}', Font: '{font_data['name']}'")
-    
-    while True:
-        try:
-            tehran_time = datetime.now(TEHRAN_TIMEZONE)
-            current_time_str = tehran_time.strftime("%H:%M")
-            stylized_time = current_time_str.translate(font_map)
-            
-            name_with_clock = f"{first_name} {stylized_time}"
-            
-            await client.update_profile(first_name=name_with_clock)
-            
-            # محاسبه زمان خواب تا ابتدای دقیقه بعدی
-            now = datetime.now(TEHRAN_TIMEZONE)
-            sleep_duration = 60 - now.second
-            await asyncio.sleep(sleep_duration)
-
-        except FloodWait as e:
-            logging.warning(f"Telegram flood limit. Waiting for {e.value + 5} seconds.")
-            await asyncio.sleep(e.value + 5)
-        except Exception as e:
-            logging.error(f"Error updating name: {e}", exc_info=True)
-            # در صورت بروز خطا، ۶۰ ثانیه صبر می‌کنیم تا از خطاهای مکرر جلوگیری شود
-            await asyncio.sleep(60)
-
-async def run_bot():
-    """ربات را با استفاده از SESSION_STRING اجرا می‌کند."""
-    SESSION_STRING = os.environ.get("SESSION_STRING")
-    FIRST_NAME = os.environ.get("FIRST_NAME", "Telegram Clock")
-    FONT_KEY = os.environ.get("FONT_KEY", "1")
-
-    if not SESSION_STRING:
-        logging.warning("SESSION_STRING not found. Bot will not run. Web interface is active.")
-        return
-
-    logging.info("SESSION_STRING found. Starting the main bot...")
-    client = Client(name="clock_self_bot", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH)
-
-    try:
-        await client.start()
-        user = await client.get_me()
-        logging.info(f"Successfully logged in as {user.first_name} (@{user.username}).")
-        
-        # اجرای تسک آپدیت نام با فونت انتخابی
-        await update_name_task(client, FIRST_NAME, FONT_KEY)
-        
-    except Exception as e:
-        logging.critical(f"Failed to start bot with session string: {e}")
-        logging.critical("The session string might be invalid or expired. Please generate a new one using the web interface.")
-    finally:
-        if client.is_connected:
-            await client.stop()
-        logging.info("Bot stopped.")
-
-
-def run_flask_app():
-    """برنامه Flask را در یک ترد جداگانه اجرا می‌کند."""
-    port = int(os.environ.get('PORT', 8080))
-    # در محیط پروداکشن باید از یک وب سرور مثل Gunicorn استفاده کرد.
-    app_flask.run(host='0.0.0.0', port=port, debug=False)
-
 if __name__ == "__main__":
-    # اگر SESSION_STRING وجود داشته باشد، ربات اصلی را اجرا کن
-    if os.environ.get("SESSION_STRING"):
-        asyncio.run(run_bot())
-    else:
-        # در غیر این صورت، وب سرور را برای لاگین و تولید SESSION_STRING اجرا کن
-        logging.info("No SESSION_STRING found. Starting Flask server for login...")
-        run_flask_app()
+    logging.info("Starting Flask server for login interface...")
+    port = int(os.environ.get('PORT', 8080))
+    app_flask.run(host='0.0.0.0', port=port, debug=False)

@@ -54,26 +54,6 @@ def get_font_previews():
     }
     return previews
 
-async def update_name_once(client: Client, font_style: str):
-    """نام کاربر را یک بار برای نمایش فعال‌سازی آپدیت می‌کند."""
-    try:
-        me = await client.get_me()
-        original_name = me.first_name
-        
-        # منطق ساده برای حذف ساعت قبلی از نام
-        parts = original_name.rsplit(' ', 1)
-        if len(parts) > 1 and ':' in parts[-1]:
-             original_name = parts[0]
-
-        tehran_time = datetime.now(TEHRAN_TIMEZONE).strftime("%H:%M")
-        stylized_time = stylize_time(tehran_time, font_style)
-        
-        new_name = f"{original_name} {stylized_time}"
-        await client.update_profile(first_name=new_name)
-        logging.info(f"Name for user '{original_name}' was temporarily updated.")
-    except Exception as e:
-        logging.error(f"Could not temporarily update name: {e}")
-
 # --- قالب‌های HTML ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -93,6 +73,8 @@ HTML_TEMPLATE = """
         button { padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; }
         button:hover { background-color: #0056b3; }
         .error { color: #d93025; margin-top: 15px; font-weight: bold; background-color: #fce8e6; padding: 10px; border-radius: 8px; border: 1px solid #f8a9a0; }
+        .session-box { margin-top: 15px; }
+        .session-box textarea { width: 100%; min-height: 100px; font-family: monospace; background: #f4f4f4; border: 1px solid #ddd; padding: 10px; box-sizing: border-box; border-radius: 6px; }
         label { font-weight: bold; color: #555; display: block; margin-bottom: 5px; text-align: right; }
         .font-options { border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
         .font-option { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #ddd; cursor: pointer; transition: background-color 0.2s; }
@@ -150,9 +132,13 @@ HTML_TEMPLATE = """
                 <input type="password" name="password" placeholder="2FA Password" required>
                 <button type="submit">ورود</button>
             </form>
-        {% elif step == 'SHOW_SUCCESS' %}
-            <h1 class="success">✅ فعال شد!</h1>
-            <p>ساعت با موفقیت کنار نام شما قرار گرفت.</p>
+        {% elif step == 'SHOW_SESSION' %}
+            <h1 class="success">✅ کد دائمی‌سازی آماده شد!</h1>
+            <p>برای فعال‌سازی دائمی ربات، کد زیر را کپی کرده و در متغیر <code>SESSION_STRING</code> هاست خود ذخیره کنید.</p>
+            <div class="session-box">
+                <textarea readonly onclick="this.select()">{{ session_string }}</textarea>
+            </div>
+            <p style="margin-top: 10px;">فراموش نکنید که متغیر <code>FONT_STYLE</code> را نیز با مقدار <strong>{{ font_style }}</strong> در هاست خود تنظیم کنید.</p>
             <form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">ورود با شماره جدید</button></form>
         {% endif %}
     </div>
@@ -204,8 +190,7 @@ def login():
             async def sign_in_task():
                 try:
                     await client.sign_in(phone, p_hash, code)
-                    await update_name_once(client, session.get('font_style'))
-                    return None, None
+                    return await client.export_session_string(), None
                 except SessionPasswordNeeded:
                     return None, 'GET_PASSWORD'
                 finally:
@@ -213,12 +198,12 @@ def login():
                         await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(sign_in_task(), EVENT_LOOP)
-            _, next_step = future.result(timeout=45)
+            session_string, next_step = future.result(timeout=45)
 
             if next_step:
                 return render_template_string(HTML_TEMPLATE, step=next_step)
             else:
-                return render_template_string(HTML_TEMPLATE, step='SHOW_SUCCESS')
+                return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
 
         elif action == 'password':
             password = request.form.get('password')
@@ -228,13 +213,13 @@ def login():
             async def check_password_task():
                 try:
                     await client.check_password(password)
-                    await update_name_once(client, session.get('font_style'))
+                    return await client.export_session_string()
                 finally:
                     await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(check_password_task(), EVENT_LOOP)
-            future.result(timeout=45)
-            return render_template_string(HTML_TEMPLATE, step='SHOW_SUCCESS')
+            session_string = future.result(timeout=45)
+            return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
             
     except Exception as e:
         if phone:

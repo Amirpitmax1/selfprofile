@@ -172,6 +172,7 @@ def cleanup_session_file(phone_number):
 
 # =======================================================
 # PYROGRAM ASYNC CORE FUNCTIONS
+# (4-space indentation enforced strictly here)
 # =======================================================
 
 async def send_verification_code(phone_number: str):
@@ -212,13 +213,13 @@ async def sign_in_and_get_session(phone_number: str, phone_code_hash: str, code:
         try:
             if not password:
                 await client.sign_in(phone_number, phone_code_hash, code)
-            except SessionPasswordNeeded:
-                if not password:
-                    await client.disconnect()
-                    return {"success": False, "needs_password": True}
-                
-                # If 2FA is needed and password is provided, check it
-                await client.check_password(password)
+        except SessionPasswordNeeded:
+            if not password:
+                await client.disconnect()
+                return {"success": False, "needs_password": True}
+            
+            # If 2FA is needed and password is provided, check it
+            await client.check_password(password)
 
         # 2. Login Successful
         session_string = await client.export_session_string()

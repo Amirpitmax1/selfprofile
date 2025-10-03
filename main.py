@@ -8,6 +8,8 @@ from pyrogram.errors import (
     PhoneCodeInvalid,
     PasswordHashInvalid,
     PhoneNumberInvalid,
+    # 💥💥💥 PhoneCodeExpired برای مدیریت خطای شما اضافه شد 💥💥💥
+    PhoneCodeExpired, 
 )
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -203,6 +205,13 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
     except PhoneCodeInvalid:
         await client.disconnect()
         return {"success": False, "error": "کد تایید وارد شده اشتباه است."}
+    
+    # 💥💥💥 مدیریت خطای منقضی شدن کد 💥💥💥
+    except PhoneCodeExpired: 
+        await client.disconnect()
+        logging.error("PhoneCodeExpired: The user took too long to enter the code.")
+        return {"success": False, "error": "کد تایید منقضی شده است. کدهای تلگرام سریعاً منقضی می‌شوند. لطفاً برگردید و دوباره تلاش کنید و کد را سریع‌تر وارد نمایید."}
+        
     except PasswordHashInvalid:
         await client.disconnect()
         return {"success": False, "error": "رمز عبور دو مرحله‌ای اشتباه است.", "needs_password": True}
@@ -212,11 +221,12 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
         await client.disconnect()
         
         detailed_error = f"خطای پیش‌بینی نشده‌ای در هنگام ورود رخ داد. (نوع خطا: {error_type})"
+        
         # افزودن راهنمایی برای خطاهای رایج
         if error_type in ["ApiIdInvalid", "ApiKeyInvalid"]:
             detailed_error += " لطفاً مطمئن شوید که API_ID و API_HASH به درستی به عنوان متغیرهای محیطی تنظیم شده‌اند."
         elif "Telegram is having internal issues" in str(e):
-             detailed_error = "تلگرام در حال حاضر با مشکلات داخلی مواجه است. لطفاً چند دقیقه دیگر دوباره تلاش کنید."
+            detailed_error = "تلگرام در حال حاضر با مشکلات داخلی مواجه است. لطفاً چند دقیقه دیگر دوباره تلاش کنید."
 
         return {"success": False, "error": detailed_error}
 
@@ -400,4 +410,3 @@ if __name__ == "__main__":
         # در غیر این صورت، وب سرور را برای لاگین و تولید SESSION_STRING اجرا کن
         logging.info("No SESSION_STRING found. Starting Flask server for login...")
         run_flask_app()
-

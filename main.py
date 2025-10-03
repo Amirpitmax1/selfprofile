@@ -1,6 +1,7 @@
 import asyncio
 import os
 import logging
+import time
 from pyrogram import Client, filters
 from pyrogram.errors import (
     FloodWait, SessionPasswordNeeded, PhoneCodeInvalid,
@@ -29,7 +30,7 @@ DEFAULT_FIRST_NAME = os.environ.get("FIRST_NAME", "ye amir")
 CLOCK_FONTS = {
     "1": {"name": "Style 1 (Fullwidth)", "map": str.maketrans('0123456789:', '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟿:')}, # Default
     "2": {"name": "Style 2 (Circled)", "map": str.maketrans('0123456789:', '⓪①②③④⑤⑥⑦⑧⑨:')},
-    "3": {"name": "Style 3 (Double Struck)", "map": str.maketrans('0123456789:', '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:')}, # FIX: Changed '𝚠' to '𝟚' and '𝠙' to '𝟠𝟡' to match the length of the source string (11 chars)
+    "3": {"name": "Style 3 (Double Struck)", "map": str.maketrans('0123456789:', '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:')}, 
     "4": {"name": "Style 4 (Monospace)", "map": str.maketrans('0123456789:', '０１２３４５６７８９:')},
 }
 # --- متغیرهای برنامه ---
@@ -50,6 +51,59 @@ APP_STATE = {
     "error_message": None,
     "show_session_message": False,
 }
+
+# --- Pyrogram Client Initialization (Run when main.py is imported by Gunicorn) ---
+SESSION_STRING = os.environ.get("SESSION_STRING")
+
+if not API_ID or not API_HASH:
+    logging.critical("CRITICAL ERROR: API_ID or API_HASH is not set. Assuming defaults.")
+
+if SESSION_STRING:
+    logging.info("SESSION_STRING found. Initializing client for direct run...")
+    client = Client(name="clock_self_bot", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH)
+else:
+    logging.warning("SESSION_STRING variable not found. Initializing client for web login flow...")
+    client = Client(name="clock_self_bot", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+
+APP_STATE["client"] = client
+
+# --- Async Loop Management (Runs Pyrogram in a separate thread for Gunicorn compatibility) ---
+
+def start_asyncio_loop():
+    """Sets up and runs the Pyrogram client/tasks in a separate thread."""
+    # Create a new loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    APP_STATE["loop"] = loop
+    
+    try:
+        if SESSION_STRING:
+            # Run the full bot logic (start, update name, wait for disconnection)
+            loop.run_until_complete(main_bot_runner())
+        else:
+            # Just keep the loop running so web routes can use run_coroutine_threadsafe
+            logging.info("Starting Pyrogram client connection in background...")
+            loop.run_until_complete(APP_STATE["client"].connect())
+            loop.run_forever()
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Asyncio loop stopping...")
+    finally:
+        # Cleanup
+        if APP_STATE["client"].is_connected:
+            loop.run_until_complete(APP_STATE["client"].stop()) 
+        loop.close()
+
+# Start the asyncio loop in a daemon thread upon file import
+# This ensures it runs regardless of whether Gunicorn or main.py starts it.
+if not APP_STATE.get("loop"): 
+    try:
+        async_thread = Thread(target=start_asyncio_loop, daemon=True)
+        async_thread.start()
+        # Give the thread a moment to initialize the loop
+        time.sleep(1) 
+        logging.info("Background Pyrogram asyncio loop started successfully.")
+    except Exception as e:
+        logging.error(f"Failed to start background asyncio thread: {e}")
 
 # --- قالب‌های HTML ---
 HTML_TEMPLATE = """
@@ -168,7 +222,8 @@ def home():
         "phone_code_hash": APP_STATE["phone_code_hash"],
         "error_message": APP_STATE["error_message"],
         "show_session_message": APP_STATE["show_session_message"],
-        "clock_fonts": {k: {'name': v['name'], 'map': dict(v['map'])} for k, v in CLOCK_FONTS.items()}, # Pass font info for selection
+        # Ensure only serializable objects are passed (dict from maketrans)
+        "clock_fonts": {k: {'name': v['name'], 'map': dict(v['map'])} for k, v in CLOCK_FONTS.items()}, 
     }
     return render_template_string(HTML_TEMPLATE, **template_vars)
 
@@ -208,6 +263,7 @@ def login():
     action = request.form.get('action')
     future = None
     try:
+        # We use run_coroutine_threadsafe because Flask/Gunicorn runs in a different thread than the Asyncio loop
         if action == 'code':
             future = asyncio.run_coroutine_threadsafe(
                 handle_code_submit(request.form.get('code'), request.form.get('phone_code_hash')), APP_STATE["loop"]
@@ -236,8 +292,7 @@ def login():
 # --- توابع Async برای مدیریت مراحل لاگین ---
 async def handle_phone_submit(phone_number):
     client = APP_STATE["client"]
-    if not client.is_connected: await client.connect()
-    # Use the phone number stored in APP_STATE from the form
+    # Client is already connected in the background thread if SESSION_STRING is missing
     sent_code = await client.send_code(phone_number) 
     APP_STATE["phone_code_hash"] = sent_code.phone_code_hash
     APP_STATE["login_step"] = "CODE"
@@ -246,25 +301,20 @@ async def handle_phone_submit(phone_number):
 async def handle_code_submit(code, phone_code_hash):
     client = APP_STATE["client"]
     try:
-        if not client.is_connected: await client.connect()
-        # Use the phone number stored in APP_STATE
         await client.sign_in(APP_STATE["phone_number"], phone_code_hash, code) 
         await activate_bot_features(client)
     except SessionPasswordNeeded:
         logging.info("Two-factor authentication required.")
         APP_STATE["login_step"] = "PASSWORD"
     except Exception as e:
-        if client.is_connected: await client.disconnect()
         raise e
 
 async def handle_password_submit(password):
     client = APP_STATE["client"]
     try:
-        if not client.is_connected: await client.connect()
         await client.check_password(password)
         await activate_bot_features(client)
     except Exception as e:
-        if client.is_connected: await client.disconnect()
         raise e
 
 # --- توابع اصلی ربات ---
@@ -334,7 +384,6 @@ async def update_name():
                 break 
             await asyncio.sleep(60) 
 
-# تابع run_flask و اجرای آن در Thread حذف شد. Gunicorn باید آن را اجرا کند.
 
 async def main_bot_runner():
     """Main runner for the bot when a SESSION_STRING is available."""
@@ -348,7 +397,6 @@ async def main_bot_runner():
         APP_STATE["phone_number"] = user.phone_number or APP_STATE["phone_number"]
 
         # If SESSION_STRING is used, we assume default font for simplicity
-        # or you can add a FONT_KEY environment variable. We stick to default "1" for now.
         APP_STATE["selected_font_key"] = os.environ.get("FONT_KEY", "1")
         
         await activate_bot_features(client)
@@ -360,52 +408,7 @@ async def main_bot_runner():
 
 
 if __name__ == "__main__":
-    logging.info("Starting application...")
-    SESSION_STRING = os.environ.get("SESSION_STRING")
-
-    # Finalize font maps (convert str.maketrans to dict for clean storage/use)
-    # 🐛 FIX: The explicit conversion logic below caused the TypeError because 
-    # the keys of a str.maketrans object are integers (Unicode code points), 
-    # not strings, leading to the TypeError when using ''.join().
-    # The map objects are already correctly initialized above, so we remove 
-    # this redundant and faulty logic.
-
-
-    if not API_ID or not API_HASH:
-        logging.critical("CRITICAL ERROR: API_ID or API_HASH is not set. Exiting.")
-        exit()
-
-    # Initialize Pyrogram client
-    if SESSION_STRING:
-        logging.info("SESSION_STRING found. Initializing client...")
-        client = Client(name="clock_self_bot", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH)
-    else:
-        logging.warning("SESSION_STRING variable not found. Starting web login flow.")
-        client = Client(name="clock_self_bot", api_id=API_ID, api_hash=API_HASH, in_memory=True)
-
-    APP_STATE["client"] = client
-    
-    # Main Asyncio loop setup
-    loop = asyncio.get_event_loop()
-    APP_STATE["loop"] = loop
-    
-    try:
-        if SESSION_STRING:
-            # If session is provided, run the bot continuously
-            loop.run_until_complete(main_bot_runner())
-        else:
-            # If no session, run the loop indefinitely to allow Flask threads to call async methods
-            logging.info("Open the website address in your browser to log in.")
-            loop.run_forever() 
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Stopping application...")
-    finally:
-        # Cleanup
-        if client.is_connected:
-            loop.run_until_complete(client.stop()) 
-        tasks = asyncio.all_tasks(loop)
-        for task in tasks:
-            task.cancel()
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
-        logging.info("Application stopped.")
+    # --- BLOCK FOR LOCAL TESTING ONLY ---
+    logging.info("Running Flask in development mode for local testing.")
+    port = int(os.environ.get('PORT', 5000))
+    app_flask.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)

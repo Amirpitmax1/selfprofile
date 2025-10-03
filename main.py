@@ -216,7 +216,8 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
         await client.disconnect()
         logging.error("PhoneCodeExpired: The user took too long to enter the code or the key/hash is restricted.")
         # پیام خطا را کمی دقیق‌تر می‌کنیم تا کاربر بداند باید فرآیند را از نو شروع کند.
-        return {"success": False, "error": "کد تایید منقضی شده است. زمان وارد کردن کد تمام شده. لطفاً **تغییر شماره یا تلاش مجدد** را انتخاب کنید تا یک کد جدید دریافت شود."}
+        # توجه: این پیام خطا در تابع submit_code باعث ریست کامل خواهد شد.
+        return {"success": False, "error": "کد تایید منقضی شده است. زمان وارد کردن کد تمام شده. لطفاً مجدداً شروع به کار کنید."}
         
     except PasswordHashInvalid:
         await client.disconnect()
@@ -316,14 +317,19 @@ def submit_code():
     elif result.get("needs_password"):
         session['login_step'] = 'PASSWORD'
     else:
-        session['error_message'] = result.get('error')
-        
-        # 💡 مدیریت خطای انقضای کد: فرآیند را کاملا ریست می‌کنیم.
-        if "کد تایید منقضی شده است." in result.get('error', ''):
-             # پاک کردن session و شروع مجدد برای دریافت hash جدید
-             return redirect(url_for('reset')) 
-             
-        session['login_step'] = 'CODE' # اجازه تلاش مجدد برای وارد کردن کد
+        # 💡 اصلاح منطق مدیریت خطا:
+        # تنها اگر خطا صراحتاً کد تایید اشتباه (PhoneCodeInvalid) باشد، کاربر می‌تواند مجدداً تلاش کند.
+        # برای PhoneCodeExpired و هر خطای نامشخص دیگر، کل فرآیند را ریست می‌کنیم.
+        error_message = result.get('error')
+        session['error_message'] = error_message
+
+        # اگر خطا صراحتاً PhoneCodeInvalid باشد (کد اشتباه است)، کاربر می‌تواند دوباره تلاش کند.
+        if "کد تایید وارد شده اشتباه است." in error_message:
+             session['login_step'] = 'CODE' 
+        else:
+             # برای PhoneCodeExpired و خطاهای عمومی، کل فرآیند را ریست می‌کنیم.
+             logging.warning(f"Non-retryable error during sign-in: {error_message}. Resetting session.")
+             return redirect(url_for('reset'))
 
     return redirect(url_for('home'))
 
@@ -351,7 +357,10 @@ def submit_password():
         if result.get("needs_password"):
             session['login_step'] = 'PASSWORD'
         else: # اگر خطای دیگری بود به مرحله کد برمی‌گردیم
-            session['login_step'] = 'CODE'
+            # در صورت خطاهای عمومی غیرمرتبط با رمز عبور (مثل خطای شبکه یا انقضای کد در این مرحله)،
+            # کاربر را به ابتدای فرآیند لاگین برمی‌گردانیم تا کد تایید جدید دریافت کند.
+            logging.warning(f"Login failed after code entry with non-password error: {session['error_message']}. Resetting.")
+            return redirect(url_for('reset'))
 
     return redirect(url_for('home'))
 

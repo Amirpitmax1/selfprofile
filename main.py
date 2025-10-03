@@ -36,7 +36,7 @@ if not API_ID or not API_HASH:
 CLOCK_FONTS = {
     "1": {"name": "Style 1 (Fullwidth)", "from": '0123456789:', "to": '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟵:'},
     "2": {"name": "Style 2 (Circled)", "from": '0123456789:', "to": '⓪①②③④⑤⑥⑦⑧⑨:'},
-    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'},
+    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝠙:'},
     "4": {"name": "Style 4 (Monospace)", "from": '0123456789:', "to": '０１２３４５６７８９:'},
 }
 
@@ -236,6 +236,25 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
 
         return {"success": False, "error": detailed_error}
 
+# =======================================================
+# تابع کمکی برای اجرای کدهای ناهمگام (Async) در توابع همگام (Sync)
+# این کار تداخل حلقه رویداد در محیط‌های وب (مثل Flask) را به حداقل می‌رساند.
+# =======================================================
+def run_async_in_sync(coroutine):
+    """
+    اجرای یک Coroutine در یک حلقه رویداد جدید برای جلوگیری از خطای RuntimeError
+    هنگام استفاده از asyncio.run در محیط‌های چندرشته‌ای.
+    """
+    try:
+        # اگر حلقه رویداد فعالی وجود دارد، Pyrogram خودش کارش را می‌کند
+        # اما برای اطمینان بیشتر، یک حلقه جدید ایجاد می‌کنیم
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coroutine)
+    except Exception as e:
+        logging.error(f"Async execution failed: {e}")
+        return {"success": False, "error": "خطای سیستمی در اجرای فرآیند تلگرام رخ داد."}
+
 
 # --- مسیرهای Flask ---
 @app_flask.route('/')
@@ -266,13 +285,14 @@ def start_login():
     session['phone_number'] = phone
     session['font_key'] = font_key
     
-    # اجرای تابع ناهمگام برای ارسال کد (بدون DC ID)
-    result = asyncio.run(send_verification_code(phone))
+    # اجرای تابع ناهمگام برای ارسال کد (با استفاده از تابع کمکی جدید)
+    result = run_async_in_sync(send_verification_code(phone))
 
     if result["success"]:
         session['phone_code_hash'] = result['phone_code_hash']
         session['login_step'] = 'CODE'
     else:
+        # اگر خطای سیستمی رخ داده باشد، آن را نمایش می‌دهیم
         session['error_message'] = result.get('error', 'خطای نامشخص.')
         session['login_step'] = 'START'
         
@@ -291,7 +311,7 @@ def submit_code():
 
     session['verification_code'] = code # کد را برای مرحله رمز عبور ذخیره می‌کنیم
 
-    result = asyncio.run(sign_in_and_get_session(phone, p_hash, code))
+    result = run_async_in_sync(sign_in_and_get_session(phone, p_hash, code))
 
     if result.get("success"):
         session['session_string'] = result['session_string']
@@ -317,7 +337,7 @@ def submit_password():
         session['error_message'] = "اطلاعات جلسه ناقص است. لطفاً از ابتدا شروع کنید."
         return redirect(url_for('reset'))
 
-    result = asyncio.run(sign_in_and_get_session(phone, p_hash, code, password))
+    result = run_async_in_sync(sign_in_and_get_session(phone, p_hash, code, password))
 
     if result.get("success"):
         session['session_string'] = result['session_string']

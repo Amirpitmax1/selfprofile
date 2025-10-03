@@ -18,16 +18,18 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(
 
 # =======================================================
 # ⚠️ تنظیمات اصلی از متغیرهای محیطی خوانده می‌شود
+# مقادیر پیش‌فرض زیر فقط برای نمایش هستند و باید توسط کاربر تغییر داده شوند.
 # =======================================================
 API_ID = os.environ.get("API_ID", "28190856") 
 API_HASH = os.environ.get("API_HASH", "6b9b5309c2a211b526c6ddad6eabb521") 
-DEFAULT_PHONE_NUMBER = os.environ.get("PHONE_NUMBER", "+989011243659")
-DEFAULT_FIRST_NAME = os.environ.get("FIRST_NAME", "ye amir") 
+# تغییر مقادیر پیش‌فرض به نمونه‌های عمومی
+DEFAULT_PHONE_NUMBER = os.environ.get("PHONE_NUMBER", "+989123456789") # شماره تلفن تستی
+DEFAULT_FIRST_NAME = os.environ.get("FIRST_NAME", "ساعت تلگرام") # نام نمایشی تستی
 
 # --- تعریف فونت‌های ساعت (حالا به عنوان رشته‌های خام ذخیره می‌شوند) ---
 # We store 'from' and 'to' strings instead of the maketrans object to avoid TypeError in Jinja
 CLOCK_FONTS = {
-    "1": {"name": "Style 1 (Fullwidth)", "from": '0123456789:', "to": '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟿:'},
+    "1": {"name": "Style 1 (Fullwidth)", "from": '0123456789:', "to": '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟵:'},
     "2": {"name": "Style 2 (Circled)", "from": '0123456789:', "to": '⓪①②③④⑤⑥⑦⑧⑨:'},
     "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
     "4": {"name": "Style 4 (Monospace)", "from": '0123456789:', "to": '０１２３４５６７８９:'},
@@ -218,10 +220,30 @@ def home():
         future = asyncio.run_coroutine_threadsafe(handle_phone_submit(APP_STATE["phone_number"]), APP_STATE['loop'])
         try:
             future.result(timeout=30)
+        except asyncio.TimeoutError:
+            logging.error("Timeout waiting for phone code submission result.", exc_info=True)
+            APP_STATE["login_step"] = "FAILED"
+            APP_STATE["error_message"] = "زمان ارسال کد تایید به پایان رسید (Timeout). احتمالاً به دلیل سرعت پایین اینترنت یا محدودیت تلگرام است. لطفاً چند دقیقه صبر کنید و دوباره تلاش کنید."
         except Exception as e:
+            # Pyrogram errors like FloodWait or PhoneCodeInvalid will be raised here
             logging.error(f"Error sending code automatically: {e}", exc_info=True)
             APP_STATE["login_step"] = "FAILED"
-            APP_STATE["error_message"] = "ارسال کد تایید ناموفق بود. لطفاً مطمئن شوید شماره صحیح است و دوباره تلاش کنید."
+            
+            error_message = "ارسال کد تایید ناموفق بود. لطفاً مطمئن شوید:"
+            error_details = []
+            
+            error_text = str(e).lower()
+            
+            if "phone number is invalid" in error_text or "not registered" in error_text:
+                error_details.append("شماره تلفن (با کد کشور) را صحیح وارد کرده‌اید.")
+            elif "flood" in error_text:
+                error_details.append("محدودیت تلگرام (FloodWait) فعال شده است. لطفاً حداقل یک ساعت دیگر امتحان کنید.")
+            elif "session" in error_text:
+                 error_details.append("مشکلی در اتصال Pyrogram رخ داده است. لطفاً بعداً دوباره تلاش کنید.")
+            else:
+                error_details.append("مشکل اتصال به سرور تلگرام وجود نداشته باشد.")
+                
+            APP_STATE["error_message"] = error_message + "\n- " + "\n- ".join(error_details) + " \n[جزئیات فنی: " + type(e).__name__ + "]"
             
     template_vars = {
         "step": APP_STATE["login_step"],

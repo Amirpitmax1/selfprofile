@@ -33,7 +33,6 @@ FONT_STYLES = {
     "monospace":{'0':'𝟶','1':'𝟷','2':'𝟸','3':'𝟹','4':'𝟺','5':'𝟻','6':'𝟼','7':'𝟽','8':'𝟾','9':'𝟿',':':':'},
     "normal":   {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
 }
-# --- [FIX] Corrected line to fix the TypeError ---
 ALL_DIGITS = "".join(set(char for font in FONT_STYLES.values() for char in font.values()))
 
 EVENT_LOOP = asyncio.new_event_loop()
@@ -45,9 +44,8 @@ def stylize_time(time_str: str, style: str) -> str:
     font_map = FONT_STYLES.get(style, FONT_STYLES["stylized"])
     return ''.join(font_map.get(char, char) for char in time_str)
 
-async def update_profile_clock(client: Client, font_style: str):
+async def update_profile_clock(client: Client, phone: str, font_style: str):
     """حلقه اصلی که نام پروفایل را با ساعت تهران آپدیت می‌کند."""
-    phone = client.phone_number
     logging.info(f"Starting clock bot for {phone} with font '{font_style}'...")
     while phone in ACTIVE_BOTS:
         try:
@@ -89,19 +87,22 @@ async def update_profile_clock(client: Client, font_style: str):
 
 async def start_bot_instance(session_string: str, phone: str, font_style: str):
     """یک نمونه جدید از ربات را با سشن استرینگ داده شده فعال می‌کند."""
-    # اگر ربات قبلی برای این شماره فعال بود، آن را متوقف کن
-    if phone in ACTIVE_BOTS:
-        task = ACTIVE_BOTS.pop(phone, None)
-        if task:
-            task.cancel()
-        await asyncio.sleep(1) # فرصت برای توقف تسک قبلی
+    try:
+        if phone in ACTIVE_BOTS:
+            task = ACTIVE_BOTS.pop(phone, None)
+            if task:
+                task.cancel()
+            await asyncio.sleep(1) 
 
-    client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string)
-    await client.start()
-    
-    # ایجاد و ذخیره تسک جدید
-    task = asyncio.create_task(update_profile_clock(client, font_style))
-    ACTIVE_BOTS[phone] = task
+        client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string)
+        await client.start()
+        
+        task = asyncio.create_task(update_profile_clock(client, phone, font_style))
+        ACTIVE_BOTS[phone] = task
+        logging.info(f"Successfully started bot instance for {phone}.")
+    except Exception as e:
+        logging.error(f"FAILED to start bot instance for {phone}: {e}", exc_info=True)
+
 
 # --- قالب‌های HTML ---
 HTML_TEMPLATE = """
@@ -241,7 +242,6 @@ def login():
                 except SessionPasswordNeeded:
                     return 'GET_PASSWORD'
                 finally:
-                    # در هر صورت کلاینت موقت را پاکسازی می‌کنیم
                     await cleanup_client(phone)
 
             future = asyncio.run_coroutine_threadsafe(sign_in_task(), EVENT_LOOP)

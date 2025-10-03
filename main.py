@@ -8,7 +8,6 @@ from pyrogram.errors import (
     PhoneCodeInvalid,
     PasswordHashInvalid,
     PhoneNumberInvalid,
-    # 💥💥💥 PhoneCodeExpired برای مدیریت خطای شما اضافه شد 💥💥💥
     PhoneCodeExpired, 
 )
 from datetime import datetime
@@ -28,8 +27,6 @@ API_HASH = os.environ.get("API_HASH")
 # بررسی متغیرهای حیاتی
 if not API_ID or not API_HASH:
     logging.critical("CRITICAL ERROR: API_ID or API_HASH environment variables are not set!")
-    # در محیط واقعی، بهتر است برنامه متوقف شود.
-    # raise SystemExit("API_ID and API_HASH must be set.")
     # برای تست محلی، می‌توان مقادیر پیش‌فرض قرار داد
     API_ID = os.environ.get("API_ID", "28190856")
     API_HASH = os.environ.get("API_HASH", "6b9b5309c2a211b526c6ddad6eabb521")
@@ -46,7 +43,7 @@ CLOCK_FONTS = {
 # --- متغیرهای برنامه ---
 TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
 app_flask = Flask(__name__)
-# ⚠️ کلید امنیتی برای استفاده از Session ضروری است. حتماً یک مقدار امن و مخفی تنظیم کنید.
+# ⚠️ کلید امنیتی
 app_flask.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'a_very_secret_and_random_key_for_flask_sessions')
 
 
@@ -92,10 +89,14 @@ HTML_TEMPLATE = """
     <div class="container">
         {% if step == 'START' %}
             <h1>تنظیم سلف بات ساعت</h1>
-            <p>برای نمایش ساعت کنار نام تلگرام خود، وارد شوید. این سایت فقط برای تولید کلید نشست (Session String) است و اطلاعات شما را ذخیره نمی‌کند.</p>
+            <p>برای نمایش ساعت کنار نام تلگرام خود، وارد شوید. برای رفع مشکل انقضای کد، می‌توانید **شماره دیتاسنتر (DC ID)** را تغییر دهید.</p>
             <form action="{{ url_for('start_login') }}" method="post">
                 <label for="phone">شماره تلفن (با کد کشور)</label>
                 <input type="tel" id="phone" name="phone_number" placeholder="+989123456789" required autofocus value="{{ phone_number or '' }}">
+                
+                <label for="dc_id">شماره دیتاسنتر (DC ID)</label>
+                <input type="number" id="dc_id" name="dc_id" placeholder="پیش فرض: 2" min="1" max="5" value="{{ dc_id or '2' }}">
+                <p style="font-size: 0.8em; color: #777; margin-top: -10px;">اگر خطا گرفتید، این عدد را به 1، 3، 4 یا 5 تغییر دهید. (معمولاً 2 مناسب است)</p>
                 
                 <label for="font">انتخاب فونت ساعت</label>
                 <select id="font" name="font_key">
@@ -112,11 +113,12 @@ HTML_TEMPLATE = """
         {% elif step == 'CODE' %}
             <h1>مرحله ۱: کد تایید</h1>
             <p>کدی به حساب تلگرام شما با شماره <strong>{{ phone_number }}</strong> ارسال شد. لطفاً آن را وارد کنید.</p>
+            <p class="info" style="font-size: 0.9em;">(اتصال به دیتاسنتر: DC {{ dc_id }})</p>
             <form action="{{ url_for('submit_code') }}" method="post">
                 <input type="text" name="code" placeholder="کد ارسال شده" required autofocus inputmode="numeric">
                 <button type="submit">تایید کد</button>
             </form>
-            <a href="{{ url_for('reset') }}" style="font-size: 0.9em; color: #666; margin-top: 15px; display: block;">تغییر شماره یا تلاش مجدد</a>
+            <a href="{{ url_for('reset') }}" style="font-size: 0.9em; color: #666; margin-top: 15px; display: block;">تغییر شماره، DC ID یا تلاش مجدد</a>
 
         {% elif step == 'PASSWORD' %}
             <h1>مرحله ۲: رمز دو مرحله‌ای</h1>
@@ -152,13 +154,26 @@ HTML_TEMPLATE = """
 """
 
 # --- توابع ناهمگام برای کار با Pyrogram ---
-async def send_verification_code(phone_number):
+async def send_verification_code(phone_number, dc_id):
     """
-    یک کلاینت موقت برای ارسال کد تایید ایجاد می‌کند.
+    یک کلاینت موقت برای ارسال کد تایید ایجاد می‌کند و به DC مشخص وصل می‌شود.
     """
-    client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH, in_memory=True)
+    # 💥💥💥 تنظیم DC ID برای کلاینت موقت 💥💥💥
+    client = Client(
+        name=str(phone_number), 
+        api_id=API_ID, 
+        api_hash=API_HASH, 
+        in_memory=True, 
+        **({"test_mode": True} if dc_id < 0 else {}), # فقط در صورت نیاز به تست
+        # 💥 Pyrogram از طریق DC ID اتصال اولیه را انجام می‌دهد
+        phone_number=phone_number, 
+        phone_code_hash="",
+        dc_id=dc_id if dc_id > 0 else None
+    )
+
     try:
         await client.connect()
+        # در اینجا، اگر DC ID تنظیم شده باشد، pyrogram سعی می‌کند اول به آن وصل شود.
         sent_code = await client.send_code(phone_number)
         await client.disconnect()
         return {"success": True, "phone_code_hash": sent_code.phone_code_hash}
@@ -184,6 +199,7 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
     """
     با استفاده از اطلاعات کاربر، وارد حساب شده و Session String را برمی‌گرداند.
     """
+    # در اینجا نیازی به تنظیم DC ID نیست زیرا Pyrogram اطلاعات آن را از مرحله قبل می‌داند.
     client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH, in_memory=True)
     try:
         await client.connect()
@@ -206,11 +222,11 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
         await client.disconnect()
         return {"success": False, "error": "کد تایید وارد شده اشتباه است."}
     
-    # 💥💥💥 مدیریت خطای منقضی شدن کد 💥💥💥
+    # مدیریت خطای منقضی شدن کد 
     except PhoneCodeExpired: 
         await client.disconnect()
         logging.error("PhoneCodeExpired: The user took too long to enter the code.")
-        return {"success": False, "error": "کد تایید منقضی شده است. کدهای تلگرام سریعاً منقضی می‌شوند. لطفاً برگردید و دوباره تلاش کنید و کد را سریع‌تر وارد نمایید."}
+        return {"success": False, "error": "کد تایید منقضی شده است. لطفاً برگردید و دوباره تلاش کنید و **DC ID** را به یک عدد دیگر (مانند 1، 3، 4، یا 5) تغییر دهید."}
         
     except PasswordHashInvalid:
         await client.disconnect()
@@ -222,7 +238,6 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
         
         detailed_error = f"خطای پیش‌بینی نشده‌ای در هنگام ورود رخ داد. (نوع خطا: {error_type})"
         
-        # افزودن راهنمایی برای خطاهای رایج
         if error_type in ["ApiIdInvalid", "ApiKeyInvalid"]:
             detailed_error += " لطفاً مطمئن شوید که API_ID و API_HASH به درستی به عنوان متغیرهای محیطی تنظیم شده‌اند."
         elif "Telegram is having internal issues" in str(e):
@@ -240,6 +255,7 @@ def home():
         HTML_TEMPLATE,
         step=step,
         phone_number=session.get('phone_number'),
+        dc_id=session.get('dc_id'), # 💥 DC ID را به Session اضافه کردیم
         error_message=session.pop('error_message', None), # خطا را فقط یک بار نمایش بده
         session_string=session.get('session_string'),
         clock_fonts=CLOCK_FONTS,
@@ -249,19 +265,31 @@ def home():
 
 @app_flask.route('/start-login', methods=['POST'])
 def start_login():
-    """شماره تلفن و فونت را از کاربر دریافت کرده و کد تایید ارسال می‌کند."""
+    """شماره تلفن، DC ID و فونت را از کاربر دریافت کرده و کد تایید ارسال می‌کند."""
     phone = request.form.get('phone_number')
+    dc_id_str = request.form.get('dc_id', '2')
     font_key = request.form.get('font_key', '1')
+
+    # اعتبار سنجی و تبدیل DC ID
+    try:
+        dc_id = int(dc_id_str)
+        if not (1 <= dc_id <= 5):
+             raise ValueError("DC ID must be between 1 and 5.")
+    except ValueError:
+        session['error_message'] = "DC ID باید یک عدد بین 1 تا 5 باشد."
+        session['login_step'] = 'START'
+        return redirect(url_for('home'))
 
     if not phone:
         session['error_message'] = "وارد کردن شماره تلفن الزامی است."
         return redirect(url_for('home'))
 
     session['phone_number'] = phone
+    session['dc_id'] = dc_id # 💥 ذخیره DC ID در جلسه
     session['font_key'] = font_key
     
-    # اجرای تابع ناهمگام برای ارسال کد
-    result = asyncio.run(send_verification_code(phone))
+    # اجرای تابع ناهمگام برای ارسال کد (با DC ID)
+    result = asyncio.run(send_verification_code(phone, dc_id))
 
     if result["success"]:
         session['phone_code_hash'] = result['phone_code_hash']

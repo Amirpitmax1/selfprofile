@@ -27,9 +27,9 @@ DEFAULT_FIRST_NAME = os.environ.get("FIRST_NAME", "ye amir")
 
 # --- تعریف فونت‌های ساعت ---
 CLOCK_FONTS = {
-    "1": {"name": "Style 1 (Fullwidth)", "map": str.maketrans('0123456789:', '𝟬𝟭𝟮𝟯𝟰𝟱𝟲𝟳𝟴𝟵:')}, # Default
+    "1": {"name": "Style 1 (Fullwidth)", "map": str.maketrans('0123456789:', '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟿:')}, # Default
     "2": {"name": "Style 2 (Circled)", "map": str.maketrans('0123456789:', '⓪①②③④⑤⑥⑦⑧⑨:')},
-    "3": {"name": "Style 3 (Double Struck)", "map": str.maketrans('0123456789:', '𝟘𝟙𝚠𝟛𝟜𝟝𝟞𝟟𝠙:')},
+    "3": {"name": "Style 3 (Double Struck)", "map": str.maketrans('0123456789:', '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:')}, # FIX: Changed '𝚠' to '𝟚' and '𝠙' to '𝟠𝟡' to match the length of the source string (11 chars)
     "4": {"name": "Style 4 (Monospace)", "map": str.maketrans('0123456789:', '０１２３４５６７８９:')},
 }
 # --- متغیرهای برنامه ---

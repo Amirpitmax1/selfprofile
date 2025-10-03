@@ -36,7 +36,8 @@ if not API_ID or not API_HASH:
 CLOCK_FONTS = {
     "1": {"name": "Style 1 (Fullwidth)", "from": '0123456789:', "to": '𝟬𝟭𝟮𝟯𝟺𝟻𝟼𝟳𝟾𝟵:'},
     "2": {"name": "Style 2 (Circled)", "from": '0123456789:', "to": '⓪①②③④⑤⑥⑦⑧⑨:'},
-    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝠙:'},
+    # 🌟 این خط اصلاح شد: کاراکترهای Double Struck اکنون ۱۱ کاراکتر هستند (0 تا 9 و :)
+    "3": {"name": "Style 3 (Double Struck)", "from": '0123456789:', "to": '𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡:'}, 
     "4": {"name": "Style 4 (Monospace)", "from": '0123456789:', "to": '０１２３４５６７８９:'},
 }
 
@@ -51,6 +52,7 @@ app_flask.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'a_very_secr
 def jinja_stylize_preview(time_str: str, to_chars: str) -> str:
     """فیلتر Jinja برای نمایش پیش‌نمایش فونت در قالب."""
     from_chars = '0123456789:'
+    # این خط قبلاً به دلیل طول نامساوی در Style 3 خطا می‌داد که اکنون برطرف شد.
     translation_map = str.maketrans(from_chars, to_chars)
     return time_str.translate(translation_map)
 
@@ -153,7 +155,6 @@ async def send_verification_code(phone_number):
     """
     یک کلاینت موقت برای ارسال کد تایید ایجاد می‌کند. Pyrogram خودکار بهترین DC را پیدا می‌کند.
     """
-    # اتصال بدون اجبار به یک DC خاص، اجازه می‌دهیم Pyrogram خودش بهترین را انتخاب کند
     client = Client(
         name=str(phone_number), 
         api_id=API_ID, 
@@ -190,7 +191,6 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
     """
     با استفاده از اطلاعات کاربر، وارد حساب شده و Session String را برمی‌گرداند.
     """
-    # Pyrogram در این مرحله به طور خودکار به DC صحیح وصل می‌شود
     client = Client(name=str(phone_number), api_id=API_ID, api_hash=API_HASH, in_memory=True)
     try:
         await client.connect()
@@ -238,7 +238,6 @@ async def sign_in_and_get_session(phone_number, phone_code_hash, code, password=
 
 # =======================================================
 # تابع کمکی برای اجرای کدهای ناهمگام (Async) در توابع همگام (Sync)
-# این کار تداخل حلقه رویداد در محیط‌های وب (مثل Flask) را به حداقل می‌رساند.
 # =======================================================
 def run_async_in_sync(coroutine):
     """
@@ -246,8 +245,6 @@ def run_async_in_sync(coroutine):
     هنگام استفاده از asyncio.run در محیط‌های چندرشته‌ای.
     """
     try:
-        # اگر حلقه رویداد فعالی وجود دارد، Pyrogram خودش کارش را می‌کند
-        # اما برای اطمینان بیشتر، یک حلقه جدید ایجاد می‌کنیم
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         return loop.run_until_complete(coroutine)

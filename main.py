@@ -134,10 +134,11 @@ HTML_TEMPLATE = """
             </form>
         {% elif step == 'SHOW_SESSION' %}
             <h1 class="success">✅ فعال شد!</h1>
-            <p>برای دائمی کردن ربات، این کد را کپی و در هاست خود ذخیره کنید:</p>
+            <p>برای دائمی کردن ربات، این کد را در متغیر <code>SESSION_STRING</code> هاست خود ذخیره کنید:</p>
             <div class="session-box">
                 <textarea readonly onclick="this.select()">{{ session_string }}</textarea>
             </div>
+            <p style="margin-top: 10px;">همچنین متغیر <code>FONT_STYLE</code> را با مقدار <strong>{{ font_style }}</strong> در هاست خود تنظیم کنید.</p>
             <form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">ورود با شماره جدید</button></form>
         {% endif %}
     </div>
@@ -202,9 +203,7 @@ def login():
             if next_step:
                 return render_template_string(HTML_TEMPLATE, step=next_step)
             else:
-                # به کاربر یادآوری می‌کنیم که FONT_STYLE را هم تنظیم کند
-                os.environ['FONT_STYLE'] = session.get('font_style')
-                return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string)
+                return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
 
         elif action == 'password':
             password = request.form.get('password')
@@ -220,8 +219,7 @@ def login():
 
             future = asyncio.run_coroutine_threadsafe(check_password_task(), EVENT_LOOP)
             session_string = future.result(timeout=45)
-            os.environ['FONT_STYLE'] = session.get('font_style')
-            return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string)
+            return render_template_string(HTML_TEMPLATE, step='SHOW_SESSION', session_string=session_string, font_style=session.get('font_style'))
             
     except Exception as e:
         if phone:

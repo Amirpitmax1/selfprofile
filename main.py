@@ -295,18 +295,14 @@ async def font_selection_keyboard(user_id):
     return InlineKeyboardMarkup(keyboard)
 
 # --- دستورات اصلی ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     get_user(user.id, user.username)
-    if context.args and len(context.args) > 0:
-        try:
-            referrer_id = int(context.args[0])
-            if referrer_id != user.id: logger.info(f"User {user.id} was referred by {referrer_id}")
-        except (ValueError, IndexError): pass
     await update.message.reply_text(
         f"سلام {user.first_name}! به ربات Self Pro خوش آمدید. لطفا یک گزینه را انتخاب کنید:",
         reply_markup=await main_reply_keyboard(user.id),
     )
+    return ConversationHandler.END # End any previous conversations
 
 # --- منطق خرید الماس ---
 async def buy_diamond_start_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -396,9 +392,8 @@ async def handle_transaction_approval(update: Update, context: ContextTypes.DEFA
 user_sessions = {}
 async def start_self_activation_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    cost = int(get_setting("self_hourly_cost"))
-    if get_user(user_id)['balance'] < cost * 24:
-        await update.message.reply_text("موجودی شما برای فعال‌سازی سلف (حداقل یک روز) کافی نیست.")
+    if get_user(user_id)['balance'] < 10:
+        await update.message.reply_text("برای فعال سازی سلف، حداقل باید ۱۰ الماس موجودی داشته باشید.")
         return ConversationHandler.END
     
     keyboard = [[KeyboardButton("📱 اشتراک‌گذاری شماره تلفن", request_contact=True)]]

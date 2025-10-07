@@ -648,18 +648,23 @@ async def group_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await start_bet(update, context)
         else: await update.message.reply_text("فرمت صحیح: شرطبندی <مبلغ>"); return
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("عملیات لغو شد.", reply_markup=await main_reply_keyboard(update.effective_user.id)); return ConversationHandler.END
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """لغو مکالمه فعلی."""
+    # پاک کردن داده‌های موقت کاربر
+    context.user_data.clear()
+    await update.message.reply_text(
+        "عملیات قبلی لغو شد.",
+        reply_markup=await main_reply_keyboard(update.effective_user.id)
+    )
+    return ConversationHandler.END
     
 # --- منطق شرط‌بندی ---
 async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, context: ContextTypes.DEFAULT_TYPE):
-    # نمایش پیام "در حال..." و حذف دکمه‌ها
     await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="🎲 در حال مشخص شدن برنده...", reply_markup=None)
-    await asyncio.sleep(3) # تاخیر برای هیجان
+    await asyncio.sleep(3)
 
     participants_data = { p_id: get_user(p_id) for p_id in bet_info['participants'] }
     
-    # آزاد کردن کاربران از حالت شرط‌بندی
     if 'users_in_bet' in context.chat_data:
         for p_id in bet_info['participants']:
             context.chat_data['users_in_bet'].discard(p_id)
@@ -690,7 +695,6 @@ async def end_bet_on_timeout(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     bet_info = job.data['bet_info']
     
-    # آزاد کردن کاربران
     if 'users_in_bet' in context.chat_data:
         for p_id in bet_info['participants']:
             context.chat_data['users_in_bet'].discard(p_id)
@@ -700,14 +704,12 @@ async def end_bet_on_timeout(context: ContextTypes.DEFAULT_TYPE):
         text="⌛️ زمان شرط‌بندی تمام شد و به دلیل عدم حضور شرکت‌کننده کافی لغو شد.", reply_markup=None)
 
 async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Initialize sets if they don't exist
     if 'users_in_bet' not in context.chat_data:
         context.chat_data['users_in_bet'] = set()
 
     creator = update.effective_user
     if creator.id in context.chat_data['users_in_bet']:
-        await update.message.reply_text("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید.")
-        return
+        await update.message.reply_text("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید."); return
 
     try:
         amount_str = context.args[0] if context.args else None
@@ -743,7 +745,6 @@ async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     bet_info['job'] = job
-    # Store bet info using message_id as key
     if 'bets' not in context.chat_data:
         context.chat_data['bets'] = {}
     context.chat_data['bets'][bet_message.message_id] = bet_info
@@ -770,7 +771,6 @@ async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("شما به شرط پیوستید! نتیجه بلافاصله اعلام می‌شود...", show_alert=False)
 
     bet_info['job'].schedule_removal()
-    # Remove the bet from the active list immediately
     context.chat_data['bets'].pop(message_id, None)
     await resolve_bet_logic(chat_id=update.effective_chat.id, message_id=message_id, bet_info=bet_info, context=context)
 
@@ -788,12 +788,10 @@ async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     bet_info['job'].schedule_removal()
     
-    # Free up participants
     if 'users_in_bet' in context.chat_data:
         for p_id in bet_info['participants']:
             context.chat_data['users_in_bet'].discard(p_id)
             
-    # Remove bet
     context.chat_data['bets'].pop(message_id, None)
 
     await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد.")
@@ -839,31 +837,36 @@ def main() -> None:
     global application
     setup_database()
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    # الگوی مشترک برای تمام دکمه‌های منوی اصلی
+    main_menu_pattern = '^💎 موجودی$|^🚀 Self Pro$|^💰 افزایش موجودی$|^🎁 کسب جم رایگان$|^👑 پنل ادمین$'
 
-    buy_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex('^💰 افزایش موجودی$'), buy_diamond_start_text)],
-        states={ASK_DIAMOND_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_diamond_amount)], AWAIT_RECEIPT: [MessageHandler(filters.PHOTO, await_receipt)]},
-        fallbacks=[CommandHandler("cancel", cancel)], per_message=False)
-    
-    self_pro_activation_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex('^🚀 Self Pro$'), self_pro_menu_text_handler)],
-        states={ASK_PHONE_CONTACT: [MessageHandler(filters.CONTACT, ask_phone_contact)], ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_code)], ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)]},
-        fallbacks=[CommandHandler("cancel", cancel)], per_message=False)
-    
-    admin_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex('^👑 پنل ادمین$'), admin_panel_entry_text)],
+    conversation_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex('^💰 افزایش موجودی$'), buy_diamond_start_text),
+            MessageHandler(filters.Regex('^🚀 Self Pro$'), self_pro_menu_text_handler),
+            MessageHandler(filters.Regex('^👑 پنل ادمین$'), admin_panel_entry_text),
+        ],
         states={
+            ASK_DIAMOND_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), ask_diamond_amount)],
+            AWAIT_RECEIPT: [MessageHandler(filters.PHOTO, await_receipt)],
+            ASK_PHONE_CONTACT: [MessageHandler(filters.CONTACT, ask_phone_contact)],
+            ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), ask_code)],
+            ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), ask_password)],
             ADMIN_PANEL_MAIN: [CallbackQueryHandler(ask_for_setting, pattern=r"admin_set_")],
-            SETTING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
-            SETTING_INITIAL_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
-            SETTING_SELF_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
-            SETTING_REFERRAL_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
-            SETTING_PAYMENT_CARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
-            SETTING_CHANNEL_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
-        }, fallbacks=[CommandHandler("cancel", cancel)], per_message=False)
+            SETTING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
+            SETTING_INITIAL_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
+            SETTING_SELF_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
+            SETTING_REFERRAL_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
+            SETTING_PAYMENT_CARD: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
+            SETTING_CHANNEL_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
+        },
+        fallbacks=[MessageHandler(filters.Regex(main_menu_pattern), start)], # بازگشت به منوی اصلی
+        allow_reentry=True,
+    )
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(buy_conv); application.add_handler(self_pro_activation_conv); application.add_handler(admin_conv)
+    application.add_handler(conversation_handler)
     
     application.add_handler(CommandHandler("bet", start_bet, filters=filters.ChatType.GROUPS))
     application.add_handler(CallbackQueryHandler(join_bet, pattern=r"^join_bet_"))

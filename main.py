@@ -213,21 +213,19 @@ def get_user_handle(user: User):
 
 
 # --- کیبوردهای ربات ---
-async def main_menu_keyboard(user_id):
-    user = get_user(user_id)
-    self_status = "✅ فعال" if user['self_active'] else "❌ غیرفعال"
+async def main_reply_keyboard(user_id):
+    """ایجاد کیبورد اصلی (دکمه‌های پایین صفحه)"""
     keyboard = [
-        [InlineKeyboardButton(f"💎 موجودی", callback_data="check_balance")],
-        [InlineKeyboardButton(f"🚀 Self Pro ({self_status})", callback_data="self_pro_menu")],
-        [InlineKeyboardButton("💰 افزایش موجودی", callback_data="buy_diamond")],
-        [InlineKeyboardButton("🎁 کسب جم رایگان", callback_data="referral_menu")],
-        [InlineKeyboardButton("🤝 انتقال الماس", callback_data="transfer_diamond_info")],
+        [KeyboardButton("💎 موجودی"), KeyboardButton("🚀 Self Pro")],
+        [KeyboardButton("💰 افزایش موجودی"), KeyboardButton("🎁 کسب جم رایگان")],
+        [KeyboardButton("🤝 انتقال الماس")],
     ]
     if is_admin(user_id):
-        keyboard.append([InlineKeyboardButton("👑 پنل ادمین", callback_data="admin_panel")])
-    return InlineKeyboardMarkup(keyboard)
+        keyboard.append([KeyboardButton("👑 پنل ادمین")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def admin_panel_keyboard():
+    """کیبورد زیر پیام برای پنل ادمین"""
     keyboard = [
         [InlineKeyboardButton("💎 تنظیم قیمت الماس", callback_data="admin_set_price")],
         [InlineKeyboardButton("💰 تنظیم موجودی اولیه", callback_data="admin_set_initial_balance")],
@@ -236,11 +234,11 @@ async def admin_panel_keyboard():
         [InlineKeyboardButton("💳 تنظیم شماره کارت", callback_data="admin_set_payment_card")],
         [InlineKeyboardButton("📢 تنظیم کانال اجباری", callback_data="admin_set_channel")],
         [InlineKeyboardButton("💳 تراکنش‌های در انتظار", callback_data="admin_pending_transactions")],
-        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data="main_menu")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
 async def self_pro_menu_keyboard(user_id):
+    """کیبورد زیر پیام برای منوی سلف پرو"""
     user = get_user(user_id)
     keyboard = []
     if not user['self_active']:
@@ -249,7 +247,7 @@ async def self_pro_menu_keyboard(user_id):
         keyboard.append([InlineKeyboardButton("✏️ تغییر فونت", callback_data="change_font")])
         keyboard.append([InlineKeyboardButton("❌ غیرفعال‌سازی", callback_data="deactivate_self_pro")])
         keyboard.append([InlineKeyboardButton("🗑 حذف کامل", callback_data="delete_self_pro")])
-    keyboard.append([InlineKeyboardButton("↩️ بازگشت", callback_data="main_menu")])
+    keyboard.append([InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data="main_menu_dummy")]) # Dummy for UI, does nothing
     return InlineKeyboardMarkup(keyboard)
 
 # --- دستورات اصلی ---
@@ -262,26 +260,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if referrer_id != user.id: logger.info(f"User {user.id} was referred by {referrer_id}")
         except (ValueError, IndexError): pass
     await update.message.reply_text(
-        f"سلام {user.first_name}! به ربات Self Pro خوش آمدید.",
-        reply_markup=await main_menu_keyboard(user.id),
+        f"سلام {user.first_name}! به ربات Self Pro خوش آمدید. لطفا یک گزینه را انتخاب کنید:",
+        reply_markup=await main_reply_keyboard(user.id),
     )
 
-async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    try:
-        await query.edit_message_text(
-            "منوی اصلی:",
-            reply_markup=await main_menu_keyboard(query.from_user.id)
-        )
-    except Exception: # If message is the same
-        pass
-
-# --- منطق خرید الماس ---
-async def buy_diamond_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("تعداد الماسی که قصد خرید دارید را وارد کنید:")
+# --- منطق خرید الماس (مکالمه) ---
+async def buy_diamond_start_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("تعداد الماسی که قصد خرید دارید را وارد کنید:")
     return ASK_DIAMOND_AMOUNT
 
 async def ask_diamond_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -412,7 +397,7 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     con.commit(); con.close()
     user_sessions[user_id] = client
     asyncio.create_task(self_pro_background_task(user_id, client))
-    await update.message.reply_text("✅ Self Pro با موفقیت فعال شد!", reply_markup=await main_menu_keyboard(user_id))
+    await update.message.reply_text("✅ Self Pro با موفقیت فعال شد!")
 
 async def self_pro_background_task(user_id: int, client: Client):
     if not client.is_connected:
@@ -439,39 +424,36 @@ async def self_pro_background_task(user_id: int, client: Client):
         await asyncio.sleep(3600)
     logger.info(f"Background task for user {user_id} stopped.")
 
-# --- بخش‌های دیگر ---
-async def check_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_data = get_user(query.from_user.id)
+# --- پاسخ به دکمه های کیبورد اصلی ---
+async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_data = get_user(user.id)
     diamond_price = int(get_setting("diamond_price"))
     toman_equivalent = user_data['balance'] * diamond_price
     
     text = (
-        f"💎 **موجودی شما**\n\n"
-        f"الماس: {user_data['balance']}\n"
-        f"💳 معادل: {toman_equivalent:,} تومان"
+        f"👤 کاربر: <b>{get_user_handle(user)}</b>\n\n"
+        f"💎 موجودی الماس: <b>{user_data['balance']}</b>\n"
+        f"💳 معادل تخمینی: <b>{toman_equivalent:,} تومان</b>"
     )
-    # Reply to the user's original message in the group if it exists
-    if query.message.chat.type != 'private':
-         await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-    else: # If in private chat, edit the message as before
-        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=await main_menu_keyboard(query.from_user.id))
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+async def self_pro_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "⚙️ منوی مدیریت Self Pro:",
+        reply_markup=await self_pro_menu_keyboard(update.effective_user.id)
+    )
 
-async def referral_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; await query.answer()
+async def referral_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
-    referral_link = f"https://t.me/{bot_username}?start={query.from_user.id}"
+    referral_link = f"https://t.me/{bot_username}?start={update.effective_user.id}"
     reward = get_setting("referral_reward")
     text = (f"🔗 لینک دعوت شما:\n`{referral_link}`\n\nبا هر دعوت موفق {reward} الماس هدیه بگیرید.")
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="main_menu")]]))
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
-async def transfer_diamond_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; await query.answer()
-    text = "برای انتقال الماس، روی پیام شخص مورد نظر ریپلای کرده و مقدار را به صورت عددی بنویسید (مثال: 100) یا بنویسید (مثال: انتقال الماس 100)."
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="main_menu")]]))
+async def transfer_diamond_info_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = "🤝 برای انتقال الماس، روی پیام شخص مورد نظر ریپلای کرده و مقدار را به صورت عددی بنویسید (مثال: 100) یا بنویسید (مثال: انتقال الماس 100)."
+    await update.message.reply_text(text)
 
 async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.reply_to_message: return
@@ -487,27 +469,20 @@ async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sender.id == receiver.id: await update.message.reply_text("انتقال به خود امکان‌پذیر نیست."); return
     if get_user(sender.id)['balance'] < amount: await update.message.reply_text("موجودی شما کافی نیست."); return
     
-    # اطمینان از وجود کاربر گیرنده در دیتابیس
     get_user(receiver.id, receiver.username)
     
     update_user_balance(sender.id, amount, add=False)
     update_user_balance(receiver.id, amount, add=True)
     
     text = (
-        f"👤 فرستنده: {get_user_handle(sender)}\n"
-        f"👥 گیرنده: {get_user_handle(receiver)}\n"
-        f"💵 مبلغ: {amount}\n"
-        f"🧾 مالیات: ۰\n"
-        f"✅ واریزی به گیرنده: {amount}"
+        f"✅ <b>انتقال موفق</b> ✅\n\n"
+        f"👤 <b>از:</b> {get_user_handle(sender)}\n"
+        f"👥 <b>به:</b> {get_user_handle(receiver)}\n"
+        f"💎 <b>مبلغ:</b> {amount} الماس"
     )
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-
-async def self_pro_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; await query.answer()
-    await query.edit_message_text("منوی مدیریت Self Pro:", reply_markup=await self_pro_menu_keyboard(query.from_user.id))
-
-async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def group_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """مدیریت پیام‌های متنی در گروه‌ها برای دستورات سریع"""
     if not update.message or not update.message.text:
         return
@@ -518,7 +493,6 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
 
     text = update.message.text.strip()
     
-    # دستور "موجودی"
     if text == 'موجودی':
         user = update.effective_user
         user_data = get_user(user.id, user.username)
@@ -526,14 +500,13 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
         toman_equivalent = user_data['balance'] * diamond_price
         
         reply_text = (
-            f"💎 **موجودی شما**\n\n"
-            f"الماس: {user_data['balance']}\n"
-            f"💳 معادل: {toman_equivalent:,} تومان"
+            f"👤 کاربر: <b>{get_user_handle(user)}</b>\n\n"
+            f"💎 موجودی الماس: <b>{user_data['balance']}</b>\n"
+            f"💳 معادل تخمینی: <b>{toman_equivalent:,} تومان</b>"
         )
-        await update.message.reply_text(reply_text, parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML)
         return
 
-    # دستور "شرطبندی <مبلغ>"
     if text.startswith('شرطبندی '):
         parts = text.split()
         if len(parts) == 2 and parts[1].isdigit():
@@ -548,30 +521,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("عملیات لغو شد."); return ConversationHandler.END
     
 # --- منطق شرط‌بندی ---
-
-async def end_bet(context: ContextTypes.DEFAULT_TYPE):
-    """پایان دادن به شرط‌بندی، انتخاب برنده و توزیع جوایز"""
-    job = context.job
-    chat_id = job.chat_id
-    bet_message_id = job.data['message_id']
-    bet_info = job.data['bet_info']
-    
-    # حذف شرط از حافظه
+async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data.pop('active_bet', None)
-
-    participants_data = {
-        p_id: get_user(p_id) for p_id in bet_info['participants']
-    }
+    participants_data = { p_id: get_user(p_id) for p_id in bet_info['participants'] }
     
-    if len(participants_data) < 2:
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=bet_message_id,
-            text="شرط‌بندی به دلیل عدم حضور شرکت‌کننده کافی لغو شد.",
-            reply_markup=None
-        )
-        return
-
     winner_id = random.choice(list(participants_data.keys()))
     losers_data = {uid: udata for uid, udata in participants_data.items() if uid != winner_id}
     
@@ -580,135 +533,114 @@ async def end_bet(context: ContextTypes.DEFAULT_TYPE):
     tax = math.ceil(total_pot * 0.05)
     prize = total_pot - tax
 
-    # کسر مبلغ از بازندگان
     for loser_id in losers_data.keys():
         update_user_balance(loser_id, bet_amount, add=False)
-
-    # افزودن جایزه به برنده
     update_user_balance(winner_id, prize, add=True)
 
     winner_info = participants_data[winner_id]
-    
-    losers_text_list = [f"{udata['username'] or 'کاربر'} ({uid})" for uid, udata in losers_data.items()]
-    losers_text = "\n".join(losers_text_list)
+    losers_text_list = [f"{get_user_handle(await context.bot.get_chat(uid))}" for uid in losers_data.keys()]
+    losers_text = ", ".join(losers_text_list)
     
     result_text = (
-        f"<b>◈ ━━━ Self Pro ━━━ ◈</b>\n"
-        f"<b>نتیجه شرط‌بندی:</b>\n\n"
-        f"🏆 <b>برنده:</b> {winner_info['username'] or 'کاربر'} ({winner_id})\n"
-        f"💔 <b>بازندگان:</b>\n{losers_text}\n\n"
+        f"<b>◈ ━━━ 🎲 نتیجه شرط‌بندی 🎲 ━━━ ◈</b>\n"
+        f"<b>مبلغ شرط:</b> {bet_amount} الماس\n\n"
+        f"🏆 <b>برنده:</b> {get_user_handle(await context.bot.get_chat(winner_id))}\n"
+        f"💔 <b>بازنده:</b> {losers_text}\n\n"
         f"💰 <b>جایزه:</b> {prize} الماس\n"
         f"🧾 <b>مالیات:</b> {tax} الماس\n"
         f"<b>◈ ━━━ Self Pro ━━━ ◈</b>"
     )
+    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=result_text, parse_mode=ParseMode.HTML, reply_markup=None)
 
+async def end_bet_on_timeout(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    context.chat_data.pop('active_bet', None)
     await context.bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=bet_message_id,
-        text=result_text,
-        parse_mode=ParseMode.HTML,
+        chat_id=job.chat_id, message_id=job.data['message_id'],
+        text="⌛️ زمان شرط‌بندی تمام شد و به دلیل عدم حضور شرکت‌کننده کافی لغو شد.",
         reply_markup=None
     )
 
-
 async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """شروع یک شرط‌بندی جدید در گروه"""
-    # این تابع هم با دستور /bet و هم با پیام متنی "شرطبندی" فراخوانی می‌شود
     if 'active_bet' in context.chat_data:
         await update.message.reply_text("یک شرط‌بندی دیگر در این گروه فعال است. لطفا صبر کنید.")
         return
         
     try:
-        # اگر با context.args فراخوانی شد (از /bet یا handle_text_messages)
         amount_str = context.args[0] if context.args else None
-        if not amount_str: # اگر متن خالی بود
-             raise IndexError
+        if not amount_str: raise IndexError
         amount = int(amount_str)
-        if amount <= 0:
-            await update.message.reply_text("مبلغ شرط باید بیشتر از صفر باشد.")
-            return
+        if amount <= 0: await update.message.reply_text("مبلغ شرط باید بیشتر از صفر باشد."); return
     except (IndexError, ValueError):
-        await update.message.reply_text("لطفا مبلغ شرط را مشخص کنید. مثال: /bet 100 یا شرطبندی 100")
-        return
+        await update.message.reply_text("لطفا مبلغ شرط را مشخص کنید. مثال: /bet 100 یا شرطبندی 100"); return
 
     creator = update.effective_user
-    creator_data = get_user(creator.id, creator.username)
+    if get_user(creator.id, creator.username)['balance'] < amount:
+        await update.message.reply_text("موجودی شما برای شروع این شرط‌بندی کافی نیست."); return
 
-    if creator_data['balance'] < amount:
-        await update.message.reply_text("موجودی شما برای شروع این شرط‌بندی کافی نیست.")
-        return
-
-    # ذخیره اطلاعات شرط‌بندی
-    bet_info = {
-        'amount': amount,
-        'creator_id': creator.id,
-        'participants': {creator.id} # set for unique users
-    }
+    bet_info = { 'amount': amount, 'creator_id': creator.id, 'participants': {creator.id} }
     
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"شرکت در شرط ({amount} الماس)", callback_data="join_bet")]])
+    keyboard = InlineKeyboardMarkup([[ InlineKeyboardButton("✅ پیوستن", callback_data="join_bet"), InlineKeyboardButton("❌ لغو شرط", callback_data="cancel_bet")]])
     bet_message = await update.message.reply_text(
-        f"🎲 شرط‌بندی جدید به مبلغ {amount} الماس توسط {get_user_handle(creator)} شروع شد!\n\n"
-        f"این شرط تا 60 ثانیه دیگر بسته می‌شود.\n\n"
-        f"شرکت کنندگان:\n- {get_user_handle(creator)}",
-        reply_markup=keyboard
+        f"🎲 شرط‌بندی جدید به مبلغ <b>{amount}</b> الماس توسط {get_user_handle(creator)} شروع شد!\n\n"
+        f"نفر دوم که به شرط بپیوندد، برنده مشخص خواهد شد.\n\n"
+        f"<b>شرکت کنندگان:</b>\n- {get_user_handle(creator)}",
+        reply_markup=keyboard, parse_mode=ParseMode.HTML
     )
     
-    # زمان‌بندی برای پایان شرط
     job = context.job_queue.run_once(
-        end_bet, 
-        60, 
-        chat_id=update.effective_chat.id, 
-        name=f"bet_{update.effective_chat.id}",
+        end_bet_on_timeout, 60, chat_id=update.effective_chat.id, name=f"bet_{update.effective_chat.id}",
         data={'message_id': bet_message.message_id, 'bet_info': bet_info}
     )
     
     context.chat_data['active_bet'] = {'job': job, 'info': bet_info, 'msg_id': bet_message.message_id}
 
-
 async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """پیوستن یک کاربر به شرط‌بندی فعال"""
     query = update.callback_query
     user = query.from_user
-
     if 'active_bet' not in context.chat_data:
-        await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True)
-        return
+        await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True); return
         
     bet_info = context.chat_data['active_bet']['info']
-    
     if user.id in bet_info['participants']:
-        await query.answer("شما قبلا در این شرط‌بندی شرکت کرده‌اید.", show_alert=True)
-        return
+        await query.answer("شما قبلا در این شرط‌بندی شرکت کرده‌اید.", show_alert=True); return
 
-    user_data = get_user(user.id, user.username)
-    bet_amount = bet_info['amount']
-
-    if user_data['balance'] < bet_amount:
-        await query.answer("موجودی شما برای شرکت در این شرط‌بندی کافی نیست.", show_alert=True)
-        return
+    if get_user(user.id, user.username)['balance'] < bet_info['amount']:
+        await query.answer("موجودی شما برای شرکت در این شرط‌بندی کافی نیست.", show_alert=True); return
         
     bet_info['participants'].add(user.id)
-    await query.answer("شما با موفقیت در شرط‌بندی شرکت کردید!", show_alert=False)
+    await query.answer("شما به شرط پیوستید! نتیجه بلافاصله اعلام می‌شود...", show_alert=False)
 
-    # آپدیت لیست شرکت‌کنندگان در پیام اصلی
-    participants_handles = [get_user_handle(await context.bot.get_chat(uid)) for uid in bet_info['participants']]
-    
-    text = (
-        f"🎲 شرط‌بندی جدید به مبلغ {bet_amount} الماس!\n\n"
-        f"این شرط تا لحظاتی دیگر بسته می‌شود.\n\n"
-        f"شرکت کنندگان:\n- {'\n- '.join(participants_handles)}"
+    job = context.chat_data['active_bet']['job']
+    job.schedule_removal()
+    await resolve_bet_logic(
+        chat_id=update.effective_chat.id,
+        message_id=context.chat_data['active_bet']['msg_id'],
+        bet_info=bet_info, context=context
     )
 
-    await query.edit_message_text(text, reply_markup=query.message.reply_markup)
-
-
-# --- پنل ادمین ---
-async def admin_panel_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(query.from_user.id):
-        await query.answer("شما دسترسی ندارید.", show_alert=True); return ConversationHandler.END
-    await query.answer()
-    await query.edit_message_text("👑 به پنل ادمین خوش آمدید:", reply_markup=await admin_panel_keyboard())
+    if 'active_bet' not in context.chat_data:
+        await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True); return
+    
+    bet_info = context.chat_data['active_bet']['info']
+    if query.from_user.id != bet_info['creator_id']:
+        await query.answer("فقط شروع‌کننده می‌تواند شرط را لغو کند.", show_alert=True); return
+
+    job = context.chat_data['active_bet']['job']
+    job.schedule_removal()
+    context.chat_data.pop('active_bet', None)
+    await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد.")
+    await query.answer("شرط با موفقیت لغو شد.")
+
+# --- پنل ادمین (مکالمه) ---
+async def admin_panel_entry_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id):
+        await update.message.reply_text("شما دسترسی به این بخش را ندارید.")
+        return ConversationHandler.END
+    await update.message.reply_text("👑 به پنل ادمین خوش آمدید:", reply_markup=await admin_panel_keyboard())
     return ADMIN_PANEL_MAIN
 
 async def ask_for_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -734,18 +666,10 @@ async def receive_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADMIN_PANEL_MAIN
     update_setting(setting_key, new_value)
     await update.message.reply_text("✅ تنظیمات با موفقیت ذخیره شد.")
-    # Show admin panel again
     await update.message.reply_text("👑 پنل ادمین:", reply_markup=await admin_panel_keyboard())
     return ADMIN_PANEL_MAIN
 
-async def admin_exit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("منوی اصلی:", reply_markup=await main_menu_keyboard(query.from_user.id))
-    return ConversationHandler.END
-
 def cleanup_lock_file():
-    """تابع پاکسازی برای حذف فایل قفل هنگام خروج"""
     if os.path.exists(LOCK_FILE_PATH):
         os.remove(LOCK_FILE_PATH)
         logger.info("Lock file removed.")
@@ -755,24 +679,29 @@ def main() -> None:
     setup_database()
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    buy_conv = ConversationHandler(entry_points=[CallbackQueryHandler(buy_diamond_start, pattern="^buy_diamond$")],
-        states={ASK_DIAMOND_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_diamond_amount)],
-                AWAIT_RECEIPT: [MessageHandler(filters.PHOTO, await_receipt)]},
-        fallbacks=[CommandHandler("cancel", cancel)], per_message=False)
+    buy_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex('^💰 افزایش موجودی$'), buy_diamond_start_text)],
+        states={
+            ASK_DIAMOND_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_diamond_amount)],
+            AWAIT_RECEIPT: [MessageHandler(filters.PHOTO, await_receipt)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)], per_message=False
+    )
 
-    self_pro_conv = ConversationHandler(entry_points=[CallbackQueryHandler(activate_self_pro, pattern="^activate_self_pro$")],
-        states={ASK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_phone)],
-                ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_code)],
-                ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)]},
-        fallbacks=[CommandHandler("cancel", cancel)], per_message=False)
+    self_pro_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(activate_self_pro, pattern="^activate_self_pro$")],
+        states={
+            ASK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_phone)],
+            ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_code)],
+            ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)], per_message=False
+    )
     
     admin_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_panel_entry, pattern="^admin_panel$")],
+        entry_points=[MessageHandler(filters.Regex('^👑 پنل ادمین$'), admin_panel_entry_text)],
         states={
-            ADMIN_PANEL_MAIN: [
-                CallbackQueryHandler(ask_for_setting, pattern=r"admin_set_(price|initial_balance|self_cost|referral_reward|payment_card|channel)"),
-                CallbackQueryHandler(admin_exit, pattern="^main_menu$")
-            ],
+            ADMIN_PANEL_MAIN: [CallbackQueryHandler(ask_for_setting, pattern=r"admin_set_")],
             SETTING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
             SETTING_INITIAL_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
             SETTING_SELF_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
@@ -780,50 +709,40 @@ def main() -> None:
             SETTING_PAYMENT_CARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
             SETTING_CHANNEL_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
         },
-        fallbacks=[CallbackQueryHandler(admin_exit, pattern="^main_menu$")], per_message=False)
+        fallbacks=[CommandHandler("cancel", cancel)], per_message=False
+    )
 
-    # افزودن handler ها
     application.add_handler(CommandHandler("start", start))
     application.add_handler(buy_conv); application.add_handler(self_pro_conv); application.add_handler(admin_conv)
     
-    # Handler برای شرط‌بندی
     application.add_handler(CommandHandler("bet", start_bet, filters=filters.ChatType.GROUPS))
     application.add_handler(CallbackQueryHandler(join_bet, pattern="^join_bet$"))
-
-    # Handler های اصلی
-    application.add_handler(CallbackQueryHandler(show_main_menu, pattern="^main_menu$"))
-    application.add_handler(CallbackQueryHandler(check_balance, pattern="^check_balance$"))
-    application.add_handler(CallbackQueryHandler(referral_menu, pattern="^referral_menu$"))
-    application.add_handler(CallbackQueryHandler(transfer_diamond_info, pattern="^transfer_diamond_info$"))
-    application.add_handler(CallbackQueryHandler(self_pro_menu_handler, pattern="^self_pro_menu$"))
+    application.add_handler(CallbackQueryHandler(cancel_bet, pattern="^cancel_bet$"))
     application.add_handler(CallbackQueryHandler(handle_transaction_approval, pattern=r"^(approve|reject)_\d+$"))
+
+    application.add_handler(MessageHandler(filters.Regex('^💎 موجودی$'), check_balance_text_handler))
+    application.add_handler(MessageHandler(filters.Regex('^🚀 Self Pro$'), self_pro_menu_text_handler))
+    application.add_handler(MessageHandler(filters.Regex('^🎁 کسب جم رایگان$'), referral_menu_text_handler))
+    application.add_handler(MessageHandler(filters.Regex('^🤝 انتقال الماس$'), transfer_diamond_info_text_handler))
     
-    # Handler برای انتقال الماس با فرمت‌های مختلف
     application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^(انتقال الماس\s*\d+|\d+)$'), handle_transfer))
     
-    # Handler برای پیام‌های متنی در گروه (موجودی، شرطبندی و ...)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_text_messages))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, group_text_handler))
     
     logger.info("Bot is starting...")
-    # اجرای ربات و نادیده گرفتن آپدیت‌های قدیمی برای جلوگیری از تداخل
     application.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
-    # --- سیستم قفل‌گذاری برای جلوگیری از اجرای همزمان ---
     if os.path.exists(LOCK_FILE_PATH):
         logger.critical("Lock file exists. Another instance might be running. Shutting down.")
         sys.exit(1)
     
-    # ایجاد فایل قفل
     with open(LOCK_FILE_PATH, "w") as f:
         f.write(str(os.getpid()))
     
-    # ثبت تابع پاکسازی برای حذف فایل قفل هنگام خروج
     atexit.register(cleanup_lock_file)
-    
     logger.info(f"Lock file created at {LOCK_FILE_PATH}")
-    # --------------------------------------------------
 
     flask_thread = Thread(target=run_flask); flask_thread.daemon = True; flask_thread.start()
     main()

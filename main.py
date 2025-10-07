@@ -176,9 +176,9 @@ def setup_database():
 
     cur.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (OWNER_ID,))
     
-    # اطمینان از وجود ادمین اصلی در جدول کاربران و تنظیم موجودی یک میلیون
+    # اطمینان از وجود ادمین اصلی در جدول کاربران و تنظیم موجودی پنج میلیون
     cur.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (OWNER_ID,))
-    cur.execute("UPDATE users SET balance = 1000000 WHERE user_id = ?", (OWNER_ID,))
+    cur.execute("UPDATE users SET balance = 5000000 WHERE user_id = ?", (OWNER_ID,))
 
     con.commit()
     con.close()
@@ -205,7 +205,7 @@ def get_user(user_id, username=None):
     if not user:
         initial_balance = int(get_setting("initial_balance"))
         # ادمین‌ها موجودی اولیه متفاوت دارند
-        balance = 1000000 if user_id == OWNER_ID else initial_balance
+        balance = 5000000 if user_id == OWNER_ID else initial_balance
         cur.execute("INSERT INTO users (user_id, username, balance) VALUES (?, ?, ?)", (user_id, username, balance))
         con.commit()
         cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -249,9 +249,14 @@ def get_user_handle(user: User):
 async def main_reply_keyboard(user_id):
     keyboard = [
         [KeyboardButton("💎 موجودی"), KeyboardButton("🚀 Self Pro")],
-        [KeyboardButton("💰 افزایش موجودی"), KeyboardButton("🎁 کسب جم رایگان")],
-        [KeyboardButton("🤝 انتقال الماس")],
     ]
+    
+    row_two = []
+    if not is_admin(user_id):
+        row_two.append(KeyboardButton("💰 افزایش موجودی"))
+    row_two.append(KeyboardButton("🎁 کسب جم رایگان"))
+    keyboard.append(row_two)
+
     if is_admin(user_id):
         keyboard.append([KeyboardButton("👑 پنل ادمین")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -591,10 +596,6 @@ async def referral_menu_text_handler(update: Update, context: ContextTypes.DEFAU
     reward = get_setting("referral_reward")
     text = (f"🔗 لینک دعوت شما:\n`{referral_link}`\n\nبا هر دعوت موفق {reward} الماس هدیه بگیرید.")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-
-async def transfer_diamond_info_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "🤝 برای انتقال الماس، روی پیام شخص مورد نظر ریپلای کرده و مقدار را به صورت عددی بنویسید (مثال: 100) یا بنویسید (مثال: انتقال الماس 100)."
-    await update.message.reply_text(text)
     
 async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.reply_to_message: return
@@ -831,7 +832,6 @@ def main() -> None:
 
     application.add_handler(MessageHandler(filters.Regex('^💎 موجودی$'), check_balance_text_handler))
     application.add_handler(MessageHandler(filters.Regex('^🎁 کسب جم رایگان$'), referral_menu_text_handler))
-    application.add_handler(MessageHandler(filters.Regex('^🤝 انتقال الماس$'), transfer_diamond_info_text_handler))
     
     application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^(انتقال الماس\s*\d+|\d+)$'), handle_transfer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, group_text_handler))

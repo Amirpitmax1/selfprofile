@@ -697,19 +697,19 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(transfer_diamond_info, pattern="^transfer_diamond_info$"))
     application.add_handler(CallbackQueryHandler(self_pro_menu_handler, pattern="^self_pro_menu$"))
     application.t
-    
-    # هندلرهای ادمین
-    application.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin_panel$"))
-    application.add_handler(CallbackQueryHandler(handle_transaction_approval, pattern=r"^(approve|reject)_\d+$"))
+    # ثبت MessageHandler برای قابلیت‌های خاص
+    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\d+$'), transfer_diamond_handler)) # انتقال الماس
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_messages)) # Enemy/Offline mode
 
-    # هندلر انتقال با ریپلای
-    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\d+$'), handle_transfer))
+    # اجرای وب سرور در یک ترد جداگانه
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
     
-    # هندلر شرط‌بندی (مثال)
-    application.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.Regex(r'^bet \d+$'), betting_handler))
+    # لاگ شروع ربات
+    logging.info("Bot is starting...")
 
-    # اجرای ربات
-    logger.info("Bot is starting...")
+    # شروع polling
     application.run_polling()
 
 
@@ -720,4 +720,5 @@ if __name__ == "__main__":
     flask_thread.start()
 
     main()
+
 

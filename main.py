@@ -8,6 +8,7 @@ from threading import Thread
 from datetime import datetime, timedelta
 import random
 import math
+import re
 
 # کتابخانه‌های وب برای زنده نگه داشتن ربات در Render
 from flask import Flask
@@ -445,7 +446,11 @@ async def check_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"الماس: {user_data['balance']}\n"
         f"💳 معادل: {toman_equivalent:,} تومان"
     )
-    await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    # Reply to the user's original message in the group if it exists
+    if query.message.chat.type != 'private':
+         await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    else: # If in private chat, edit the message as before
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=await main_menu_keyboard(query.from_user.id))
 
 
 async def referral_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -459,13 +464,18 @@ async def referral_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def transfer_diamond_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
-    text = "برای انتقال الماس، روی پیام شخص مورد نظر ریپلای کرده و مقدار را به صورت عددی بنویسید."
+    text = "برای انتقال الماس، روی پیام شخص مورد نظر ریپلای کرده و مقدار را به صورت عددی بنویسید (مثال: 100) یا بنویسید (مثال: انتقال الماس 100)."
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="main_menu")]]))
 
 async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.reply_to_message: return
-    try: amount = int(update.message.text)
+    
+    match = re.search(r'(\d+)', update.message.text)
+    if not match: return
+        
+    try: amount = int(match.group(1))
     except (ValueError, TypeError): return
+
     if amount <= 0: return
     sender, receiver = update.effective_user, update.message.reply_to_message.from_user
     if sender.id == receiver.id: await update.message.reply_text("انتقال به خود امکان‌پذیر نیست."); return
@@ -492,8 +502,41 @@ async def self_pro_menu_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await query.edit_message_text("منوی مدیریت Self Pro:", reply_markup=await self_pro_menu_keyboard(query.from_user.id))
 
 async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # این تابع می‌تواند برای Enemy Mode یا Offline Mode در آینده استفاده شود
-    pass
+    """مدیریت پیام‌های متنی در گروه‌ها برای دستورات سریع"""
+    if not update.message or not update.message.text:
+        return
+        
+    chat_type = update.effective_chat.type
+    if chat_type not in ['group', 'supergroup']:
+        return
+
+    text = update.message.text.strip()
+    
+    # دستور "موجودی"
+    if text == 'موجودی':
+        user = update.effective_user
+        user_data = get_user(user.id, user.username)
+        diamond_price = int(get_setting("diamond_price"))
+        toman_equivalent = user_data['balance'] * diamond_price
+        
+        reply_text = (
+            f"💎 **موجودی شما**\n\n"
+            f"الماس: {user_data['balance']}\n"
+            f"💳 معادل: {toman_equivalent:,} تومان"
+        )
+        await update.message.reply_text(reply_text, parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # دستور "شرطبندی <مبلغ>"
+    if text.startswith('شرطبندی '):
+        parts = text.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            context.args = [parts[1]]
+            await start_bet(update, context)
+        else:
+            await update.message.reply_text("فرمت صحیح: شرطبندی <مبلغ>")
+        return
+
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("عملیات لغو شد."); return ConversationHandler.END
@@ -564,17 +607,22 @@ async def end_bet(context: ContextTypes.DEFAULT_TYPE):
 
 async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """شروع یک شرط‌بندی جدید در گروه"""
+    # این تابع هم با دستور /bet و هم با پیام متنی "شرطبندی" فراخوانی می‌شود
     if 'active_bet' in context.chat_data:
         await update.message.reply_text("یک شرط‌بندی دیگر در این گروه فعال است. لطفا صبر کنید.")
         return
         
     try:
-        amount = int(context.args[0])
+        # اگر با context.args فراخوانی شد (از /bet یا handle_text_messages)
+        amount_str = context.args[0] if context.args else None
+        if not amount_str: # اگر متن خالی بود
+             raise IndexError
+        amount = int(amount_str)
         if amount <= 0:
             await update.message.reply_text("مبلغ شرط باید بیشتر از صفر باشد.")
             return
     except (IndexError, ValueError):
-        await update.message.reply_text("فرمت صحیح: /bet <مبلغ>")
+        await update.message.reply_text("لطفا مبلغ شرط را مشخص کنید. مثال: /bet 100 یا شرطبندی 100")
         return
 
     creator = update.effective_user
@@ -738,8 +786,12 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(transfer_diamond_info, pattern="^transfer_diamond_info$"))
     application.add_handler(CallbackQueryHandler(self_pro_menu_handler, pattern="^self_pro_menu$"))
     application.add_handler(CallbackQueryHandler(handle_transaction_approval, pattern=r"^(approve|reject)_\d+$"))
-    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\d+$'), handle_transfer))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_messages))
+    
+    # Handler برای انتقال الماس با فرمت‌های مختلف
+    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^(انتقال الماس\s*\d+|\d+)$'), handle_transfer))
+    
+    # Handler برای پیام‌های متنی در گروه (موجودی، شرطبندی و ...)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_text_messages))
     
     logger.info("Bot is starting...")
     application.run_polling()

@@ -1,318 +1,723 @@
-import asyncio
+# -*- coding: utf-8 -*-
+
 import os
+import sqlite3
 import logging
+import asyncio
+from threading import Thread
+from datetime import datetime, timedelta
+import random
+
+# کتابخانه‌های وب برای زنده نگه داشتن ربات در Render
+from flask import Flask
+
+# کتابخانه‌های ربات تلگرام
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    User
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    ContextTypes,
+    filters
+)
+from telegram.constants import ParseMode
+
+# کتابخانه برای بخش Self Pro (Userbot)
+# توجه: برای استفاده از Pyrogram، باید Tgcrypto هم نصب باشد
 from pyrogram import Client
 from pyrogram.errors import (
-    FloodWait, SessionPasswordNeeded, PhoneCodeInvalid,
-    PasswordHashInvalid, PhoneNumberInvalid, PhoneCodeExpired, ApiIdInvalid, UserDeactivated, AuthKeyUnregistered
+    SessionPasswordNeeded,
+    PhoneCodeInvalid,
+    PhoneNumberInvalid,
+    PasswordHashInvalid
 )
-from datetime import datetime
-from zoneinfo import ZoneInfo
-from flask import Flask, request, render_template_string, redirect, session, url_for
-from threading import Thread
 
-# --- تنظیمات لاگ‌نویسی ---
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
+# تنظیمات لاگ‌گیری برای دیباگ
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# =======================================================
-# ⚠️ تنظیمات اصلی (API_ID و API_HASH خود را اینجا وارد کنید)
-# =======================================================
-API_ID = 28190856  # ❗️ این قسمت را با API_ID عددی خودتان جایگزین کنید
-API_HASH = "6b9b5309c2a211b526c6ddad6eabb521"  # ❗️ این قسمت را با API_HASH خودتان جایگزین کنید
+# --- بخش وب سرور برای Ping ---
+# این بخش یک وب سرور ساده راه‌اندازی می‌کند تا Render سرویس را خاموش نکند
+web_app = Flask(__name__)
 
-# --- متغیرهای برنامه ---
-TEHRAN_TIMEZONE = ZoneInfo("Asia/Tehran")
-app_flask = Flask(__name__)
-app_flask.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
-
-# --- دیکشنری فونت‌ها برای ساعت ---
-FONT_STYLES = {
-    "cursive":  {'0':'𝟎','1':'𝟏','2':'𝟐','3':'𝟑','4':'𝟒','5':'𝟓','6':'𝟔','7':'𝟕','8':'𝟖','9':'𝟗',':':':'},
-    "stylized": {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵',':':':'},
-    "doublestruck": {'0':'𝟘','1':'𝟙','2':'𝟚','3':'𝟛','4':'𝟜','5':'𝟝','6':'𝟞','7':'𝟟','8':'𝟠','9':'𝟡',':':':'},
-    "monospace":{'0':'𝟶','1':'𝟷','2':'𝟸','3':'𝟹','4':'𝟺','5':'𝟻','6':'𝟼','7':'𝟽','8':'𝟾','9':'𝟿',':':':'},
-    "normal":   {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9',':':':'},
-}
-ALL_DIGITS = "".join(set(char for font in FONT_STYLES.values() for char in font.values()))
-
-EVENT_LOOP = asyncio.new_event_loop()
-ACTIVE_CLIENTS = {} # برای مدیریت کلاینت‌ها در حین ورود
-ACTIVE_BOTS = {} # برای نگهداری ربات‌های فعال
-
-# --- توابع اصلی ربات ---
-def stylize_time(time_str: str, style: str) -> str:
-    font_map = FONT_STYLES.get(style, FONT_STYLES["stylized"])
-    return ''.join(font_map.get(char, char) for char in time_str)
-
-async def update_profile_clock(client: Client, phone: str, font_style: str):
-    """حلقه اصلی که نام پروفایل را با ساعت تهران آپدیت می‌کند."""
-    logging.info(f"Starting clock bot for {phone} with font '{font_style}'...")
-    while phone in ACTIVE_BOTS:
-        try:
-            me = await client.get_me()
-            current_name = me.first_name
-            base_name = current_name
-
-            parts = current_name.rsplit(' ', 1)
-            if len(parts) > 1 and ':' in parts[-1] and any(char in ALL_DIGITS for char in parts[-1]):
-                base_name = parts[0].strip()
-
-            tehran_time = datetime.now(TEHRAN_TIMEZONE)
-            current_time_str = tehran_time.strftime("%H:%M")
-            stylized_time = stylize_time(current_time_str, font_style)
-            new_name = f"{base_name} {stylized_time}"
-            
-            if new_name != current_name:
-                await client.update_profile(first_name=new_name)
-            
-            now = datetime.now(TEHRAN_TIMEZONE)
-            sleep_duration = 60 - now.second + 0.1
-            await asyncio.sleep(sleep_duration)
-        except (UserDeactivated, AuthKeyUnregistered):
-            logging.error(f"Session for {phone} is invalid. Stopping bot.")
-            break
-        except FloodWait as e:
-            logging.warning(f"Flood wait of {e.value}s for {phone}.")
-            await asyncio.sleep(e.value + 5)
-        except Exception as e:
-            logging.error(f"An error occurred for {phone}: {e}", exc_info=True)
-            await asyncio.sleep(60)
-    
-    # پاکسازی نهایی
-    if client.is_connected:
-        await client.stop()
-    ACTIVE_BOTS.pop(phone, None)
-    logging.info(f"Clock bot for {phone} has been stopped and cleaned up.")
-
-
-async def start_bot_instance(session_string: str, phone: str, font_style: str):
-    """یک نمونه جدید از ربات را با سشن استرینگ داده شده فعال می‌کند."""
-    try:
-        if phone in ACTIVE_BOTS:
-            task = ACTIVE_BOTS.pop(phone, None)
-            if task:
-                task.cancel()
-            await asyncio.sleep(1) 
-
-        client = Client(f"bot_{phone}", api_id=API_ID, api_hash=API_HASH, session_string=session_string)
-        await client.start()
-        
-        task = asyncio.create_task(update_profile_clock(client, phone, font_style))
-        ACTIVE_BOTS[phone] = task
-        logging.info(f"Successfully started bot instance for {phone}.")
-    except Exception as e:
-        logging.error(f"FAILED to start bot instance for {phone}: {e}", exc_info=True)
-
-
-# --- قالب‌های HTML ---
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="fa" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>سلف بات ساعت تلگرام</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap');
-        body { font-family: 'Vazirmatn', sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
-        .container { background: white; padding: 30px 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; width: 100%; max-width: 480px; }
-        h1 { color: #333; margin-bottom: 20px; font-size: 1.5em; }
-        p { color: #666; line-height: 1.6; }
-        form { display: flex; flex-direction: column; gap: 15px; margin-top: 20px; }
-        input[type="tel"], input[type="text"], input[type="password"] { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; text-align: left; direction: ltr; }
-        button { padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
-        .error { color: #d93025; margin-top: 15px; font-weight: bold; background-color: #fce8e6; padding: 10px; border-radius: 8px; border: 1px solid #f8a9a0; }
-        label { font-weight: bold; color: #555; display: block; margin-bottom: 5px; text-align: right; }
-        .font-options { border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
-        .font-option { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #ddd; cursor: pointer; }
-        .font-option:last-child { border-bottom: none; }
-        .font-option input[type="radio"] { margin-left: 15px; }
-        .font-option label { display: flex; justify-content: space-between; align-items: center; width: 100%; font-weight: normal; cursor: pointer; }
-        .font-option .preview { font-size: 1.3em; font-weight: bold; direction: ltr; color: #0056b3; }
-        .success { color: #1e8e3e; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        {% if step == 'GET_PHONE' %}
-            <h1>ورود به سلف بات</h1>
-            <p>شماره و استایل فونت خود را انتخاب کنید تا ربات فعال شود.</p>
-            {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
-            <form action="{{ url_for('login') }}" method="post">
-                <input type="hidden" name="action" value="phone">
-                <div>
-                    <label for="phone">شماره تلفن (با کد کشور)</label>
-                    <input type="tel" id="phone" name="phone_number" placeholder="+989123456789" required autofocus>
-                </div>
-                <div>
-                    <label>استایل فونت ساعت</label>
-                    <div class="font-options">
-                        {% for name, data in font_previews.items() %}
-                        <div class="font-option" onclick="document.getElementById('font-{{ data.style }}').checked = true;">
-                            <input type="radio" name="font_style" value="{{ data.style }}" id="font-{{ data.style }}" {% if loop.first %}checked{% endif %}>
-                            <label for="font-{{ data.style }}">
-                                <span>{{ name }}</span>
-                                <span class="preview">{{ data.preview }}</span>
-                            </label>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-                <button type="submit">ارسال کد تایید</button>
-            </form>
-        {% elif step == 'GET_CODE' %}
-            <h1>کد تایید</h1>
-            <p>کدی به تلگرام شما با شماره <strong>{{ phone_number }}</strong> ارسال شد.</p>
-            {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
-            <form action="{{ url_for('login') }}" method="post"> <input type="hidden" name="action" value="code"> <input type="text" name="code" placeholder="Verification Code" required> <button type="submit">تایید کد</button> </form>
-        {% elif step == 'GET_PASSWORD' %}
-            <h1>رمز دو مرحله‌ای</h1>
-            <p>حساب شما نیاز به رمز تایید دو مرحله‌ای دارد.</p>
-            {% if error_message %} <p class="error">{{ error_message }}</p> {% endif %}
-            <form action="{{ url_for('login') }}" method="post"> <input type="hidden" name="action" value="password"> <input type="password" name="password" placeholder="2FA Password" required> <button type="submit">ورود</button> </form>
-        {% elif step == 'SHOW_SUCCESS' %}
-            <h1 class="success">✅ ربات فعال شد!</h1>
-            <p>ساعت کنار نام شما قرار گرفت. تا زمانی که این سایت فعال باشد، ربات شما نیز کار خواهد کرد.</p>
-            <form action="{{ url_for('home') }}" method="get" style="margin-top: 20px;"><button type="submit">ورود با شماره جدید</button></form>
-        {% endif %}
-    </div>
-</body>
-</html>
-"""
-
-def get_font_previews():
-    """یک دیکشنری از نمونه‌های رندر شده فونت‌ها ایجاد می‌کند."""
-    sample_time = "12:34"
-    previews = {
-        "کشیده": {"style": "cursive", "preview": stylize_time(sample_time, "cursive")},
-        "فانتزی": {"style": "stylized", "preview": stylize_time(sample_time, "stylized")},
-        "توخالی": {"style": "doublestruck", "preview": stylize_time(sample_time, "doublestruck")},
-        "کامپیوتری": {"style": "monospace", "preview": stylize_time(sample_time, "monospace")},
-        "ساده": {"style": "normal", "preview": stylize_time(sample_time, "normal")},
-    }
-    return previews
-
-async def cleanup_client(phone):
-    client = ACTIVE_CLIENTS.pop(phone, None)
-    if client and client.is_connected:
-        await client.disconnect()
-
-@app_flask.route('/')
-def home():
-    session.clear()
-    font_previews = get_font_previews()
-    return render_template_string(HTML_TEMPLATE, step='GET_PHONE', font_previews=font_previews)
-
-@app_flask.route('/login', methods=['POST'])
-def login():
-    action = request.form.get('action')
-    phone = session.get('phone_number')
-    
-    try:
-        if action == 'phone':
-            phone = request.form.get('phone_number')
-            font = request.form.get('font_style')
-            session['phone_number'] = phone
-            session['font_style'] = font
-            
-            async def send_code_task():
-                await cleanup_client(phone)
-                client = Client(f"user_{phone}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
-                ACTIVE_CLIENTS[phone] = client
-                await client.connect()
-                sent_code = await client.send_code(phone)
-                session['phone_code_hash'] = sent_code.phone_code_hash
-
-            future = asyncio.run_coroutine_threadsafe(send_code_task(), EVENT_LOOP)
-            future.result(timeout=45)
-            return render_template_string(HTML_TEMPLATE, step='GET_CODE', phone_number=phone)
-
-        elif action == 'code':
-            code = request.form.get('code')
-            p_hash = session.get('phone_code_hash')
-            client = ACTIVE_CLIENTS.get(phone)
-            if not client: raise Exception("Session expired.")
-
-            async def sign_in_task():
-                needs_password = False
-                try:
-                    await client.sign_in(phone, p_hash, code)
-                    session_str = await client.export_session_string()
-                    asyncio.run_coroutine_threadsafe(start_bot_instance(session_str, phone, session.get('font_style')), EVENT_LOOP)
-                    return None
-                except SessionPasswordNeeded:
-                    needs_password = True
-                    return 'GET_PASSWORD'
-                finally:
-                    # [FIX] Only cleanup if login is fully successful or fails, not if password is needed
-                    if not needs_password:
-                        await cleanup_client(phone)
-
-            future = asyncio.run_coroutine_threadsafe(sign_in_task(), EVENT_LOOP)
-            next_step = future.result(timeout=45)
-
-            if next_step:
-                return render_template_string(HTML_TEMPLATE, step=next_step)
-            else:
-                return render_template_string(HTML_TEMPLATE, step='SHOW_SUCCESS')
-
-        elif action == 'password':
-            password = request.form.get('password')
-            client = ACTIVE_CLIENTS.get(phone)
-            if not client: raise Exception("Session expired.")
-
-            async def check_password_task():
-                try:
-                    await client.check_password(password)
-                    session_str = await client.export_session_string()
-                    asyncio.run_coroutine_threadsafe(start_bot_instance(session_str, phone, session.get('font_style')), EVENT_LOOP)
-                finally:
-                    # Cleanup after the final step
-                    await cleanup_client(phone)
-
-            future = asyncio.run_coroutine_threadsafe(check_password_task(), EVENT_LOOP)
-            future.result(timeout=45)
-            return render_template_string(HTML_TEMPLATE, step='SHOW_SUCCESS')
-            
-    except Exception as e:
-        if phone:
-            asyncio.run_coroutine_threadsafe(cleanup_client(phone), EVENT_LOOP)
-        logging.error(f"Error during '{action}': {e}", exc_info=True)
-        error_msg, current_step = "An unexpected error occurred.", 'GET_PHONE'
-        
-        if isinstance(e, PhoneCodeInvalid):
-            error_msg, current_step = "کد تایید اشتباه است.", 'GET_CODE'
-        elif isinstance(e, PasswordHashInvalid):
-            error_msg, current_step = "رمز دو مرحله‌ای اشتباه است.", 'GET_PASSWORD'
-        elif isinstance(e, PhoneNumberInvalid):
-            error_msg = "شماره تلفن نامعتبر است."
-        elif isinstance(e, PhoneCodeExpired):
-            error_msg = "کد تایید منقضی شده، دوباره تلاش کنید."
-        elif isinstance(e, FloodWait):
-            error_msg = f"محدودیت تلگرام. لطفا {e.value} ثانیه دیگر تلاش کنید."
-        
-        font_previews = get_font_previews()
-        if current_step == 'GET_PHONE': session.clear()
-        
-        return render_template_string(HTML_TEMPLATE, step=current_step, error_message=error_msg, phone_number=phone, font_previews=font_previews)
-    
-    return redirect(url_for('home'))
+@web_app.route('/')
+def index():
+    return "Bot is running!"
 
 def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host='0.0.0.0', port=port)
+    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
-def run_asyncio_loop():
+# --- تنظیمات اولیه و متغیرها ---
+# این مقادیر باید در بخش Environment Variables در Render تنظیم شوند
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "7998966950:AAGEaASYQ8S16ADyl0x5-ucSe2oWPpJHMbg")
+API_ID = int(os.environ.get("API_ID", "9536480"))
+API_HASH = os.environ.get("API_HASH", "4e52f6f12c47a0da918009260b6e3d44")
+OWNER_ID = int(os.environ.get("OWNER_ID", "7423552124")) # ادمین اصلی
+
+# مسیر دیتابیس در دیسک پایدار Render
+DB_PATH = os.path.join(os.environ.get("RENDER_DISK_PATH", "."), "bot_database.db")
+SESSION_PATH = os.environ.get("RENDER_DISK_PATH", ".")
+
+# مراحل ConversationHandler برای فرآیندهای چندمرحله‌ای
+(
+    ASK_DIAMOND_AMOUNT,
+    AWAIT_RECEIPT,
+    ADMIN_CONTROLS,
+    SETTING_PRICE,
+    SETTING_INITIAL_BALANCE,
+    SETTING_SELF_COST,
+    SETTING_CHANNEL_LINK,
+    ASK_PHONE,
+    ASK_CODE,
+    ASK_PASSWORD,
+    TRANSFER_AMOUNT
+) = range(11)
+
+# --- مدیریت دیتابیس (SQLite) ---
+def db_connect():
+    """اتصال به دیتابیس و برگرداندن کانکشن و کرسر"""
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    return con, con.cursor()
+
+def setup_database():
+    """ایجاد جداول اولیه در دیتابیس در صورتی که وجود نداشته باشند"""
+    con, cur = db_connect()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            balance INTEGER DEFAULT 0,
+            self_active BOOLEAN DEFAULT FALSE,
+            phone_number TEXT,
+            font_style TEXT DEFAULT 'normal',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS admins (
+            user_id INTEGER PRIMARY KEY
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount_diamonds INTEGER,
+            amount_toman INTEGER,
+            receipt_file_id TEXT,
+            status TEXT DEFAULT 'pending', -- pending, approved, rejected
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            approved_by INTEGER
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS referrals (
+            referrer_id INTEGER,
+            referred_id INTEGER,
+            reward_granted BOOLEAN DEFAULT FALSE,
+            PRIMARY KEY (referrer_id, referred_id)
+        )
+    """)
+
+    # تنظیمات پیش‌فرض
+    default_settings = {
+        "diamond_price": "500",  # قیمت هر الماس به تومان
+        "initial_balance": "10", # موجودی اولیه
+        "self_hourly_cost": "5",   # هزینه ساعتی سلف
+        "referral_reward": "20", # پاداش دعوت
+        "payment_card": "6037-xxxx-xxxx-xxxx",
+        "mandatory_channel": "@YourChannel"
+    }
+    for key, value in default_settings.items():
+        cur.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    # افزودن ادمین اصلی
+    cur.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (OWNER_ID,))
+    con.commit()
+    con.close()
+    logger.info("Database setup complete.")
+
+
+# --- توابع کمکی دیتابیس ---
+
+def get_setting(key):
+    con, cur = db_connect()
+    cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    result = cur.fetchone()
+    con.close()
+    return result['value'] if result else None
+
+def update_setting(key, value):
+    con, cur = db_connect()
+    cur.execute("UPDATE settings SET value = ? WHERE key = ?", (value, key))
+    con.commit()
+    con.close()
+
+def get_user(user_id):
+    con, cur = db_connect()
+    cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = cur.fetchone()
+    if not user:
+        # ایجاد کاربر جدید
+        initial_balance = int(get_setting("initial_balance"))
+        cur.execute("INSERT INTO users (user_id, balance) VALUES (?, ?)", (user_id, initial_balance))
+        con.commit()
+        cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        user = cur.fetchone()
+    con.close()
+    return user
+
+def update_user_balance(user_id, amount, add=True):
+    con, cur = db_connect()
+    operator = '+' if add else '-'
+    cur.execute(f"UPDATE users SET balance = balance {operator} ? WHERE user_id = ?", (amount, user_id))
+    con.commit()
+    con.close()
+
+def get_admins():
+    con, cur = db_connect()
+    cur.execute("SELECT user_id FROM admins")
+    admins = [row['user_id'] for row in cur.fetchall()]
+    con.close()
+    return admins
+
+def is_admin(user_id):
+    return user_id in get_admins()
+
+# --- کیبوردهای ربات ---
+
+async def main_menu_keyboard(user_id):
+    """ساخت کیبورد منوی اصلی"""
+    user = get_user(user_id)
+    self_status = "✅ فعال" if user['self_active'] else "❌ غیرفعال"
+    
+    keyboard = [
+        [InlineKeyboardButton(f"💎 موجودی: {user['balance']} الماس", callback_data="check_balance")],
+        [InlineKeyboardButton(f"🚀 Self Pro ({self_status})", callback_data="self_pro_menu")],
+        [InlineKeyboardButton("💰 افزایش موجودی", callback_data="buy_diamond")],
+        [InlineKeyboardButton("🎁 کسب جم رایگان", callback_data="referral_menu")],
+        [InlineKeyboardButton("🤝 انتقال الماس", callback_data="transfer_diamond_info")],
+    ]
+    if is_admin(user_id):
+        keyboard.append([InlineKeyboardButton("👑 پنل ادمین", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def admin_panel_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("📊 آمار کلی", callback_data="admin_stats")],
+        [InlineKeyboardButton("💎 تنظیم قیمت الماس", callback_data="admin_set_price")],
+        [InlineKeyboardButton("💰 تنظیم موجودی اولیه", callback_data="admin_set_initial_balance")],
+        [InlineKeyboardButton("🚀 تنظیم هزینه سلف", callback_data="admin_set_self_cost")],
+        [InlineKeyboardButton("📢 تنظیم کانال اجباری", callback_data="admin_set_channel")],
+        [InlineKeyboardButton("💳 مشاهده تراکنش‌های در انتظار", callback_data="admin_pending_transactions")],
+        [InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data="main_menu")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+    
+async def self_pro_menu_keyboard(user_id):
+    user = get_user(user_id)
+    keyboard = []
+    if not user['self_active']:
+        keyboard.append([InlineKeyboardButton("🚀 فعال‌سازی Self Pro", callback_data="activate_self_pro")])
+    else:
+        keyboard.append([InlineKeyboardButton("✏️ تغییر فونت", callback_data="change_font")])
+        keyboard.append([InlineKeyboardButton("❌ غیرفعال‌سازی موقت", callback_data="deactivate_self_pro")])
+        keyboard.append([InlineKeyboardButton("🗑 حذف کامل سلف", callback_data="delete_self_pro")])
+
+    keyboard.append([InlineKeyboardButton("↩️ بازگشت", callback_data="main_menu")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+# --- دستورات اصلی و شروع ربات ---
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """دستور /start"""
+    user = update.effective_user
+    user_data = get_user(user.id) # این تابع کاربر را در صورت عدم وجود ایجاد می‌کند
+    
+    # بررسی دعوت
+    if context.args and len(context.args) > 0:
+        referrer_id = int(context.args[0])
+        if referrer_id != user.id:
+            # اینجا منطق بررسی عضویت در کانال و اعطای جایزه پیاده‌سازی شود
+            logger.info(f"User {user.id} was referred by {referrer_id}")
+            # ...
+    
+    await update.message.reply_text(
+        f"سلام {user.first_name}!\nبه ربات Self Pro خوش آمدید.",
+        reply_markup=await main_menu_keyboard(user.id),
+    )
+
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش منوی اصلی (معمولا بعد از بازگشت از منوهای دیگر)"""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "منوی اصلی:",
+        reply_markup=await main_menu_keyboard(query.from_user.id)
+    )
+
+# --- منطق خرید الماس ---
+
+async def buy_diamond_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شروع فرآیند خرید الماس"""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("تعداد الماسی که قصد خرید دارید را وارد کنید:")
+    return ASK_DIAMOND_AMOUNT
+
+async def ask_diamond_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت تعداد الماس و ساخت پیش‌فاکتور"""
     try:
-        EVENT_LOOP.run_forever()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    finally:
-        EVENT_LOOP.close()
+        amount = int(update.message.text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("لطفا یک عدد صحیح و مثبت وارد کنید.")
+        return ASK_DIAMOND_AMOUNT
+
+    diamond_price = int(get_setting("diamond_price"))
+    total_cost = amount * diamond_price
+    payment_card = get_setting("payment_card")
+    
+    context.user_data['purchase_amount'] = amount
+    context.user_data['purchase_cost'] = total_cost
+
+    text = (
+        f"🧾 **پیش‌فاکتور خرید**\n\n"
+        f"💎 تعداد الماس: {amount}\n"
+        f"💳 مبلغ قابل پرداخت: {total_cost:,} تومان\n\n"
+        f"لطفاً مبلغ را به شماره کارت زیر واریز کرده و سپس عکس رسید را ارسال کنید:\n"
+        f"`{payment_card}`"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    return AWAIT_RECEIPT
+
+async def await_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت رسید و ارسال برای ادمین‌ها"""
+    if not update.message.photo:
+        await update.message.reply_text("لطفا فقط عکس رسید را ارسال کنید.")
+        return AWAIT_RECEIPT
+
+    user = update.effective_user
+    receipt_file_id = update.message.photo[-1].file_id
+    amount = context.user_data['purchase_amount']
+    cost = context.user_data['purchase_cost']
+
+    # ذخیره تراکنش در دیتابیس
+    con, cur = db_connect()
+    cur.execute(
+        "INSERT INTO transactions (user_id, amount_diamonds, amount_toman, receipt_file_id) VALUES (?, ?, ?, ?)",
+        (user.id, amount, cost, receipt_file_id)
+    )
+    transaction_id = cur.lastrowid
+    con.commit()
+    con.close()
+    
+    await update.message.reply_text("رسید شما دریافت شد و برای ادمین‌ها ارسال گردید. لطفا تا زمان تایید صبور باشید.")
+
+    # ارسال برای ادمین‌ها
+    caption = (
+        f" رسید جدید برای تایید\n\n"
+        f"کاربر: @{user.username} ({user.id})\n"
+        f"تعداد الماس: {amount}\n"
+        f"مبلغ: {cost:,} تومان"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ تایید", callback_data=f"approve_{transaction_id}"),
+            InlineKeyboardButton("❌ رد", callback_data=f"reject_{transaction_id}")
+        ]
+    ])
+
+    for admin_id in get_admins():
+        try:
+            await context.bot.send_photo(chat_id=admin_id, photo=receipt_file_id, caption=caption, reply_markup=keyboard)
+        except Exception as e:
+            logger.error(f"Failed to send receipt to admin {admin_id}: {e}")
+
+    return ConversationHandler.END
+    
+async def handle_transaction_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت تایید یا رد تراکنش توسط ادمین"""
+    query = update.callback_query
+    await query.answer()
+    
+    action, transaction_id = query.data.split("_")
+    transaction_id = int(transaction_id)
+    admin_id = query.from_user.id
+    
+    con, cur = db_connect()
+    cur.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,))
+    tx = cur.fetchone()
+    
+    if not tx:
+        await query.edit_message_caption(caption="این تراکنش یافت نشد.", reply_markup=None)
+        con.close()
+        return
+        
+    if tx['status'] != 'pending':
+        await query.edit_message_caption(caption=f"این تراکنش قبلا توسط ادمین دیگری به وضعیت «{tx['status']}» تغییر یافته است.", reply_markup=None)
+        con.close()
+        return
+
+    user_id = tx['user_id']
+    amount = tx['amount_diamonds']
+
+    if action == "approve":
+        update_user_balance(user_id, amount, add=True)
+        cur.execute("UPDATE transactions SET status = 'approved', approved_by = ? WHERE id = ?", (admin_id, transaction_id))
+        con.commit()
+        await query.edit_message_caption(caption=f"تراکنش تایید شد.\n {amount} الماس به کاربر اضافه شد.", reply_markup=None)
+        try:
+            await context.bot.send_message(user_id, f"خرید شما به تعداد {amount} الماس با موفقیت تایید شد.")
+        except Exception as e:
+            logger.warning(f"Could not notify user {user_id} about approved transaction: {e}")
+    
+    elif action == "reject":
+        cur.execute("UPDATE transactions SET status = 'rejected', approved_by = ? WHERE id = ?", (admin_id, transaction_id))
+        con.commit()
+        await query.edit_message_caption(caption="تراکنش رد شد.", reply_markup=None)
+        try:
+            await context.bot.send_message(user_id, f"متاسفانه خرید شما رد شد. برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.")
+        except Exception as e:
+            logger.warning(f"Could not notify user {user_id} about rejected transaction: {e}")
+            
+    con.close()
+
+
+# --- منطق Self Pro ---
+
+user_sessions = {} # برای نگهداری کلاینت‌های Pyrogram
+
+async def activate_self_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    user = get_user(user_id)
+    cost = int(get_setting("self_hourly_cost")) # اینجا هزینه فعالسازی اولیه را میتوانید جداگانه تعریف کنید
+
+    if user['balance'] < cost * 24: # حداقل برای یک روز
+        await query.edit_message_text("موجودی شما برای فعال‌سازی سلف کافی نیست. حداقل باید به اندازه یک روز هزینه، الماس داشته باشید.")
+        return ConversationHandler.END
+    
+    await query.edit_message_text(
+        "برای فعال‌سازی سلف، لطفا شماره تلفن خود را با فرمت +989123456789 ارسال کنید."
+    )
+    return ASK_PHONE
+
+async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone = update.message.text
+    user_id = update.effective_user.id
+    
+    context.user_data['phone'] = phone
+    
+    # ایجاد کلاینت Pyrogram
+    client = Client(f"user_{user_id}", api_id=API_ID, api_hash=API_HASH, workdir=SESSION_PATH)
+    
+    try:
+        await client.connect()
+        sent_code = await client.send_code(phone)
+        context.user_data['phone_code_hash'] = sent_code.phone_code_hash
+        context.user_data['client'] = client
+        
+        await update.message.reply_text("کد تایید ارسال شده به تلگرام شما را وارد کنید:")
+        return ASK_CODE
+    except (PhoneNumberInvalid, Exception) as e:
+        logger.error(f"Error sending code for {phone}: {e}")
+        await update.message.reply_text("شماره تلفن نامعتبر است. لطفا دوباره تلاش کنید.")
+        return ASK_PHONE
+
+async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    code = update.message.text
+    phone = context.user_data['phone']
+    phone_code_hash = context.user_data['phone_code_hash']
+    client = context.user_data['client']
+    
+    try:
+        await client.sign_in(phone, phone_code_hash, code)
+        await process_self_activation(update, context, client)
+        return ConversationHandler.END
+
+    except SessionPasswordNeeded:
+        await update.message.reply_text("حساب شما دارای تایید دو مرحله‌ای است. لطفا رمز خود را وارد کنید:")
+        return ASK_PASSWORD
+    except (PhoneCodeInvalid, Exception) as e:
+        logger.error(f"Error on sign in with code: {e}")
+        await update.message.reply_text("کد وارد شده اشتباه است. لطفا مجددا تلاش کنید.")
+        await client.disconnect()
+        return ConversationHandler.END
+
+async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    password = update.message.text
+    client = context.user_data['client']
+    
+    try:
+        await client.check_password(password)
+        await process_self_activation(update, context, client)
+    except (PasswordHashInvalid, Exception) as e:
+        logger.error(f"Error on 2FA check: {e}")
+        await update.message.reply_text("رمز عبور اشتباه است. فرآیند لغو شد.")
+        await client.disconnect()
+    
+    return ConversationHandler.END
+
+async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_TYPE, client: Client):
+    user_id = update.effective_user.id
+    phone = context.user_data['phone']
+    
+    # ذخیره اطلاعات و فعال‌سازی
+    con, cur = db_connect()
+    cur.execute("UPDATE users SET self_active = TRUE, phone_number = ? WHERE user_id = ?", (phone, user_id))
+    con.commit()
+    con.close()
+    
+    user_sessions[user_id] = client
+    # شروع تسک پس‌زمینه برای کسر هزینه و آپدیت پروفایل
+    asyncio.create_task(self_pro_background_task(user_id, client))
+    
+    await update.message.reply_text(
+        "✅ Self Pro با موفقیت فعال شد!",
+        reply_markup=await main_menu_keyboard(user_id)
+    )
+
+async def self_pro_background_task(user_id: int, client: Client):
+    """تسک پس‌زمینه برای کسر هزینه و آپدیت پروفایل"""
+    while user_id in user_sessions:
+        user = get_user(user_id)
+        if not user or not user['self_active']:
+            break # توقف تسک
+
+        hourly_cost = int(get_setting("self_hourly_cost"))
+        
+        if user['balance'] < hourly_cost:
+            # موجودی تمام شد، سلف را خاموش کن
+            logger.info(f"User {user_id} ran out of balance. Deactivating Self Pro.")
+            con, cur = db_connect()
+            cur.execute("UPDATE users SET self_active = FALSE WHERE user_id = ?", (user_id,))
+            con.commit()
+            con.close()
+            
+            await client.disconnect()
+            del user_sessions[user_id]
+            try:
+                await application.bot.send_message(user_id, "موجودی الماس شما تمام شد و Self Pro غیرفعال گردید.")
+            except Exception as e:
+                logger.warning(f"Could not notify user {user_id} about self deactivation: {e}")
+            break
+
+        # کسر هزینه
+        update_user_balance(user_id, hourly_cost, add=False)
+        
+        # آپدیت نام پروفایل با زمان
+        try:
+            me = await client.get_me()
+            # این بخش را میتوانید برای حذف زمان قبلی از نام، بهینه کنید
+            now = datetime.now().strftime("%H:%M")
+            await client.update_profile(first_name=f"{me.first_name} | {now}")
+        except Exception as e:
+            logger.error(f"Failed to update profile for {user_id}: {e}")
+
+        # انتظار برای ساعت بعد
+        await asyncio.sleep(3600) # 1 hour
+    logger.info(f"Background task for user {user_id} stopped.")
+
+# --- بخش‌های دیگر ---
+
+async def check_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = get_user(query.from_user.id)
+    diamond_price = int(get_setting("diamond_price"))
+    toman_equivalent = user['balance'] * diamond_price
+    
+    await query.edit_message_text(
+        f"💎 موجودی شما: {user['balance']} الماس\n"
+        f"💳 معادل: {toman_equivalent:,} تومان",
+        reply_markup=await main_menu_keyboard(query.from_user.id)
+    )
+
+async def referral_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    bot_username = (await context.bot.get_me()).username
+    referral_link = f"https://t.me/{bot_username}?start={user_id}"
+    reward = get_setting("referral_reward")
+    
+    text = (
+        "🔗 لینک دعوت اختصاصی شما:\n"
+        f"`{referral_link}`\n\n"
+        f"با هر نفری که از طریق این لینک وارد ربات شود و در کانال اجباری عضو بماند، شما {reward} الماس هدیه می‌گیرید."
+    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="main_menu")]])
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+
+
+async def transfer_diamond_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    text = (
+        "برای انتقال الماس، روی پیام شخص مورد نظر در هر چتی ریپلای کرده و مقدار الماس را به صورت عددی بنویسید.\n\n"
+        "مثال: روی پیام یک کاربر ریپلای کنید و بنویسید `50`"
+    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ بازگشت", callback_data="main_menu")]])
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت انتقال الماس با ریپلای"""
+    if not update.message.reply_to_message:
+        return
+
+    try:
+        amount = int(update.message.text)
+        if amount <= 0: return
+    except (ValueError, TypeError):
+        return
+
+    sender = update.effective_user
+    receiver = update.message.reply_to_message.from_user
+
+    if sender.id == receiver.id:
+        await update.message.reply_text("شما نمی‌توانید به خودتان الماس منتقل کنید.")
+        return
+
+    sender_data = get_user(sender.id)
+
+    if sender_data['balance'] < amount:
+        await update.message.reply_text("موجودی شما برای این انتقال کافی نیست.")
+        return
+        
+    # انجام تراکنش
+    update_user_balance(sender.id, amount, add=False)
+    update_user_balance(receiver.id, amount, add=True)
+
+    # نمایش رسید
+    text = (
+        f"✅ انتقال با موفقیت انجام شد!\n\n"
+        f"👤 فرستنده: {sender.mention_markdown_v2()}\n"
+        f"👥 گیرنده: {receiver.mention_markdown_v2()}\n"
+        f"💵 مبلغ: {amount} الماس"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+
+async def betting_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """منطق شرط‌بندی"""
+    # این بخش نیاز به پیاده‌سازی کامل‌تری دارد
+    # برای مثال، نگهداری وضعیت شرط‌بندی در context.chat_data
+    # و مدیریت شرکت‌کنندگان
+    await update.message.reply_text("ویژگی شرط‌بندی در حال ساخت است!")
+    
+async def self_pro_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "منوی مدیریت Self Pro:",
+        reply_markup=await self_pro_menu_keyboard(query.from_user.id)
+    )
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """لغو کردن و پایان مکالمه"""
+    await update.message.reply_text("عملیات لغو شد.")
+    return ConversationHandler.END
+
+
+# --- پنل ادمین ---
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        await query.answer("شما دسترسی به این بخش را ندارید.", show_alert=True)
+        return
+    await query.answer()
+    await query.edit_message_text("👑 به پنل ادمین خوش آمدید:", reply_markup=await admin_panel_keyboard())
+
+# ... سایر توابع پنل ادمین اینجا پیاده‌سازی شوند ...
+# (تنظیم قیمت، مشاهده آمار و ...)
+
+
+def main() -> None:
+    """شروع به کار ربات"""
+    global application
+    
+    # راه‌اندازی دیتابیس
+    setup_database()
+    
+    # ساخت اپلیکیشن ربات
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Conversation handler برای خرید الماس
+    buy_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(buy_diamond_start, pattern="^buy_diamond$")],
+        states={
+            ASK_DIAMOND_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_diamond_amount)],
+            AWAIT_RECEIPT: [MessageHandler(filters.PHOTO, await_receipt)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    
+    # Conversation handler برای فعالسازی سلف
+    self_pro_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(activate_self_pro, pattern="^activate_self_pro$")],
+        states={
+            ASK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_phone)],
+            ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_code)],
+            ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    # افزودن handler ها
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(buy_conv_handler)
+    application.add_handler(self_pro_conv_handler)
+    
+    application.add_handler(CallbackQueryHandler(show_main_menu, pattern="^main_menu$"))
+    application.add_handler(CallbackQueryHandler(check_balance, pattern="^check_balance$"))
+    application.add_handler(CallbackQueryHandler(referral_menu, pattern="^referral_menu$"))
+    application.add_handler(CallbackQueryHandler(transfer_diamond_info, pattern="^transfer_diamond_info$"))
+    application.add_handler(CallbackQueryHandler(self_pro_menu_handler, pattern="^self_pro_menu$"))
+    application.t
+    
+    # هندلرهای ادمین
+    application.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin_panel$"))
+    application.add_handler(CallbackQueryHandler(handle_transaction_approval, pattern=r"^(approve|reject)_\d+$"))
+
+    # هندلر انتقال با ریپلای
+    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\d+$'), handle_transfer))
+    
+    # هندلر شرط‌بندی (مثال)
+    application.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.Regex(r'^bet \d+$'), betting_handler))
+
+    # اجرای ربات
+    logger.info("Bot is starting...")
+    application.run_polling()
+
 
 if __name__ == "__main__":
-    logging.info("Starting Telegram Clock Bot Service...")
-    loop_thread = Thread(target=run_asyncio_loop, daemon=True)
-    loop_thread.start()
-    run_flask()
+    # اجرای وب سرور در یک ترد جداگانه
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    main()
 

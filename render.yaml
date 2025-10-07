@@ -1,0 +1,41 @@
+render.yaml - Configuration for deploying on Render
+services:
+
+type: web # Render's web service type can run any process
+name: telegram-self-pro-bot
+env: python # The environment to use
+plan: free # Use the free instance type
+
+A persistent disk to store the SQLite database and session files
+This data will persist across deploys and restarts.
+disks:
+
+name: data
+mountPath: /app/data # Mount the disk at this path
+sizeGB: 1 # 1 GB is plenty for a database and session files
+
+The command to start the bot.
+It will automatically install dependencies from requirements.txt first.
+startCommand: "python main.py"
+
+Set up environment variables here.
+The values are set directly. For better security, use Render's Secret Files.
+envVars:
+
+key: PYTHON_VERSION
+value: 3.11.4
+
+key: RENDER_DISK_PATH # Pass the disk mount path to the app
+value: /app/data
+
+key: TELEGRAM_TOKEN
+value: "7998966950:AAGEaASYQ8S16ADyl0x5-ucSe2oWPpJHMbg"
+
+key: API_ID
+value: "9536480"
+
+key: API_HASH
+value: "4e52f6f12c47a0da918009260b6e3d44"
+
+key: OWNER_ID
+value: "7423552124"

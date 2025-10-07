@@ -42,7 +42,8 @@ from pyrogram.errors import (
     SessionPasswordNeeded,
     PhoneCodeInvalid,
     PhoneNumberInvalid,
-    PasswordHashInvalid
+    PasswordHashInvalid,
+    ApiIdInvalid
 )
 
 # تنظیمات لاگ‌گیری برای دیباگ
@@ -63,9 +64,10 @@ def run_flask():
     web_app.run(host="0.0.0.0", port=port)
 
 # --- تنظیمات اولیه و متغیرها ---
+# مقادیر زیر باید در بخش Environment Variables در Render تنظیم شوند
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "7998966950:AAGEaASYQ8S16ADyl0x5-ucSe2oWPpJHMbg")
 API_ID = int(os.environ.get("API_ID", "9536480"))
-API_HASH = os.environ.get("API_HASH", "4e52f6f12c4Tena918009260b6e3d44")
+API_HASH = os.environ.get("API_HASH", "4e52f6f12c47a0da918009260b6e3d44") # اصلاح اشتباه تایپی
 OWNER_ID = int(os.environ.get("OWNER_ID", "7423552124"))
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
@@ -417,13 +419,22 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent_code = await client.send_code(phone)
         context.user_data.update({'phone_code_hash': sent_code.phone_code_hash, 'client': client})
         await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:"); return ASK_CODE
-    except PhoneNumberInvalid:
-        await update.message.reply_text("شماره تلفن نامعتبر است. دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
-        await client.disconnect(); return ConversationHandler.END
+    except (ApiIdInvalid, PhoneNumberInvalid):
+        error_text = "شماره تلفن نامعتبر است." if isinstance(e, PhoneNumberInvalid) else "API ID یا API Hash نامعتبر است."
+        await update.message.reply_text(f"{error_text} لطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
+        if client.is_connected: await client.disconnect()
+        return ConversationHandler.END
     except Exception as e:
-        logger.error(f"Error sending code for {phone}: {e}")
-        await update.message.reply_text("خطا در اتصال به تلگرام.", reply_markup=await main_reply_keyboard(user_id))
-        await client.disconnect(); return ConversationHandler.END
+        logger.error(f"Pyrogram connection/send_code error for {phone}: {e}")
+        await update.message.reply_text(
+            "خطا در اتصال به تلگرام. \n\n"
+            "این مشکل معمولا به دلیل نامعتبر بودن `API_ID` یا `API_HASH` رخ می‌دهد. "
+            "لطفا از صحیح بودن مقادیر در تنظیمات ربات اطمینان حاصل کنید.",
+            reply_markup=await main_reply_keyboard(user_id)
+        )
+        if client.is_connected:
+            await client.disconnect()
+        return ConversationHandler.END
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text
@@ -869,9 +880,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_transaction_approval, pattern=r"^(approve|reject)_\d+$"))
 
     application.add_handler(CallbackQueryHandler(toggle_self_pause, pattern=r"^self_(pause|resume)$"))
-    application.add_handler(CallbackQueryHandler(change_font_menu, pattern="^change_font_menu$"))
+    application.add_handler(CallbackQueryHandler(change_font_menu, pattern=r"^change_font_menu$"))
     application.add_handler(CallbackQueryHandler(set_font, pattern=r"^set_font_"))
-    application.add_handler(CallbackQueryHandler(back_to_self_menu, pattern="^back_to_self_menu$"))
+    application.add_handler(CallbackQueryHandler(back_to_self_menu, pattern=r"^back_to_self_menu$"))
     application.add_handler(CallbackQueryHandler(delete_self_confirm, pattern="^delete_self_confirm$"))
     application.add_handler(CallbackQueryHandler(delete_self_final, pattern="^delete_self_final$"))
 

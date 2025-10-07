@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 import random
 import math
 import re
+import sys
+import atexit
 
 # کتابخانه‌های وب برای زنده نگه داشتن ربات در Render
 from flask import Flask
@@ -65,8 +67,12 @@ API_ID = int(os.environ.get("API_ID", "9536480"))
 API_HASH = os.environ.get("API_HASH", "4e52f6f12c47a0da918009260b6e3d44")
 OWNER_ID = int(os.environ.get("OWNER_ID", "7423552124"))
 
-DB_PATH = os.path.join(os.environ.get("RENDER_DISK_PATH", "data"), "bot_database.db")
-SESSION_PATH = os.path.join(os.environ.get("RENDER_DISK_PATH", "data"))
+# مسیر دیتابیس و فایل قفل در دیسک پایدار Render
+DATA_PATH = os.environ.get("RENDER_DISK_PATH", "data")
+DB_PATH = os.path.join(DATA_PATH, "bot_database.db")
+SESSION_PATH = DATA_PATH
+LOCK_FILE_PATH = os.path.join(DATA_PATH, "bot.lock")
+
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
@@ -738,6 +744,11 @@ async def admin_exit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("منوی اصلی:", reply_markup=await main_menu_keyboard(query.from_user.id))
     return ConversationHandler.END
 
+def cleanup_lock_file():
+    """تابع پاکسازی برای حذف فایل قفل هنگام خروج"""
+    if os.path.exists(LOCK_FILE_PATH):
+        os.remove(LOCK_FILE_PATH)
+        logger.info("Lock file removed.")
 
 def main() -> None:
     global application
@@ -794,9 +805,26 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_text_messages))
     
     logger.info("Bot is starting...")
-    application.run_polling()
+    # اجرای ربات و نادیده گرفتن آپدیت‌های قدیمی برای جلوگیری از تداخل
+    application.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
+    # --- سیستم قفل‌گذاری برای جلوگیری از اجرای همزمان ---
+    if os.path.exists(LOCK_FILE_PATH):
+        logger.critical("Lock file exists. Another instance might be running. Shutting down.")
+        sys.exit(1)
+    
+    # ایجاد فایل قفل
+    with open(LOCK_FILE_PATH, "w") as f:
+        f.write(str(os.getpid()))
+    
+    # ثبت تابع پاکسازی برای حذف فایل قفل هنگام خروج
+    atexit.register(cleanup_lock_file)
+    
+    logger.info(f"Lock file created at {LOCK_FILE_PATH}")
+    # --------------------------------------------------
+
     flask_thread = Thread(target=run_flask); flask_thread.daemon = True; flask_thread.start()
     main()
 

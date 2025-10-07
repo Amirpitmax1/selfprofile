@@ -1,3 +1,10 @@
-Flask
+Telegram Bot Library
+python-telegram-bot[ext]
+
+Userbot (Self Pro) Library
 Pyrogram
-TgCrypto
+Tgcrypto
+
+Web server to keep the bot alive on Render
+Flask
+gunicorn

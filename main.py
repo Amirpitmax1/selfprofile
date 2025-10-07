@@ -66,7 +66,7 @@ def run_flask():
 
 # --- تنظیمات اولیه و متغیرها ---
 # مقادیر زیر باید در بخش Environment Variables در Render تنظیم شوند
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "7998966950:AAGEaASYQ8S16ADyl0x5-ucSe2oWPpJHMbg")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8493268938:AAE9hgHlgZUMNND0EyEZ5X44_M8NiWyU9q4")
 API_ID = int(os.environ.get("API_ID", "9536480"))
 API_HASH = os.environ.get("API_HASH", "4e52f6f12c47a0da918009260b6e3d44") # اصلاح اشتباه تایپی
 OWNER_ID = int(os.environ.get("OWNER_ID", "7423552124"))

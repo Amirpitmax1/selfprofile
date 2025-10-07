@@ -65,7 +65,7 @@ def run_flask():
 # --- تنظیمات اولیه و متغیرها ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "7998966950:AAGEaASYQ8S16ADyl0x5-ucSe2oWPpJHMbg")
 API_ID = int(os.environ.get("API_ID", "9536480"))
-API_HASH = os.environ.get("API_HASH", "4e52f6f12c47a0da918009260b6e3d44")
+API_HASH = os.environ.get("API_HASH", "4e52f6f12c4Tena918009260b6e3d44")
 OWNER_ID = int(os.environ.get("OWNER_ID", "7423552124"))
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
@@ -653,9 +653,17 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 # --- منطق شرط‌بندی ---
 async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, context: ContextTypes.DEFAULT_TYPE):
-    context.chat_data.pop('active_bet', None)
+    # نمایش پیام "در حال..." و حذف دکمه‌ها
+    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="🎲 در حال مشخص شدن برنده...", reply_markup=None)
+    await asyncio.sleep(3) # تاخیر برای هیجان
+
     participants_data = { p_id: get_user(p_id) for p_id in bet_info['participants'] }
     
+    # آزاد کردن کاربران از حالت شرط‌بندی
+    if 'users_in_bet' in context.chat_data:
+        for p_id in bet_info['participants']:
+            context.chat_data['users_in_bet'].discard(p_id)
+
     winner_id = random.choice(list(participants_data.keys()))
     losers_data = {uid: udata for uid, udata in participants_data.items() if uid != winner_id}
     
@@ -676,19 +684,31 @@ async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, conte
         f"💔 <b>بازنده:</b> {losers_text}\n\n💰 <b>جایزه:</b> {prize} الماس\n🧾 <b>مالیات:</b> {tax} الماس\n"
         f"<b>◈ ━━━ Self Pro ━━━ ◈</b>"
     )
-    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=result_text, parse_mode=ParseMode.HTML, reply_markup=None)
+    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=result_text, parse_mode=ParseMode.HTML)
 
 async def end_bet_on_timeout(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
-    context.chat_data.pop('active_bet', None)
+    bet_info = job.data['bet_info']
+    
+    # آزاد کردن کاربران
+    if 'users_in_bet' in context.chat_data:
+        for p_id in bet_info['participants']:
+            context.chat_data['users_in_bet'].discard(p_id)
+
     await context.bot.edit_message_text(
         chat_id=job.chat_id, message_id=job.data['message_id'],
         text="⌛️ زمان شرط‌بندی تمام شد و به دلیل عدم حضور شرکت‌کننده کافی لغو شد.", reply_markup=None)
 
 async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'active_bet' in context.chat_data:
-        await update.message.reply_text("یک شرط‌بندی دیگر در این گروه فعال است. لطفا صبر کنید."); return
-        
+    # Initialize sets if they don't exist
+    if 'users_in_bet' not in context.chat_data:
+        context.chat_data['users_in_bet'] = set()
+
+    creator = update.effective_user
+    if creator.id in context.chat_data['users_in_bet']:
+        await update.message.reply_text("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید.")
+        return
+
     try:
         amount_str = context.args[0] if context.args else None
         if not amount_str: raise IndexError
@@ -697,58 +717,85 @@ async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (IndexError, ValueError):
         await update.message.reply_text("لطفا مبلغ شرط را مشخص کنید. مثال: /bet 100 یا شرطبندی 100"); return
 
-    creator = update.effective_user
     if get_user(creator.id, creator.username)['balance'] < amount:
         await update.message.reply_text("موجودی شما برای شروع این شرط‌بندی کافی نیست."); return
 
     bet_info = { 'amount': amount, 'creator_id': creator.id, 'participants': {creator.id} }
     
-    keyboard = InlineKeyboardMarkup([[ InlineKeyboardButton("✅ پیوستن", callback_data="join_bet"), InlineKeyboardButton("❌ لغو شرط", callback_data="cancel_bet")]])
-    bet_message = await update.message.reply_text(
-        f"🎲 شرط‌بندی جدید به مبلغ <b>{amount}</b> الماس توسط {get_user_handle(creator)} شروع شد!\n\n"
-        f"نفر دوم که به شرط بپیوندد، برنده مشخص خواهد شد.\n\n"
-        f"<b>شرکت کنندگان:</b>\n- {get_user_handle(creator)}",
+    bet_message = await update.message.reply_text("در حال ایجاد شرط...")
+    
+    keyboard = InlineKeyboardMarkup([[ 
+        InlineKeyboardButton("✅ پیوستن", callback_data=f"join_bet_{bet_message.message_id}"), 
+        InlineKeyboardButton("❌ لغو شرط", callback_data=f"cancel_bet_{bet_message.message_id}")
+    ]])
+
+    await context.bot.edit_message_text(
+        chat_id=update.effective_chat.id, message_id=bet_message.message_id,
+        text=f"🎲 شرط‌بندی جدید به مبلغ <b>{amount}</b> الماس توسط {get_user_handle(creator)} شروع شد!\n\n"
+             f"نفر دوم که به شرط بپیوندد، برنده مشخص خواهد شد.\n\n"
+             f"<b>شرکت کنندگان:</b>\n- {get_user_handle(creator)}",
         reply_markup=keyboard, parse_mode=ParseMode.HTML
     )
     
     job = context.job_queue.run_once(
-        end_bet_on_timeout, 60, chat_id=update.effective_chat.id, name=f"bet_{update.effective_chat.id}",
+        end_bet_on_timeout, 60, chat_id=update.effective_chat.id, name=f"bet_{bet_message.message_id}",
         data={'message_id': bet_message.message_id, 'bet_info': bet_info}
     )
     
-    context.chat_data['active_bet'] = {'job': job, 'info': bet_info, 'msg_id': bet_message.message_id}
+    bet_info['job'] = job
+    # Store bet info using message_id as key
+    if 'bets' not in context.chat_data:
+        context.chat_data['bets'] = {}
+    context.chat_data['bets'][bet_message.message_id] = bet_info
+    context.chat_data['users_in_bet'].add(creator.id)
 
 async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; user = query.from_user
-    if 'active_bet' not in context.chat_data:
+    message_id = int(query.data.split("_")[-1])
+
+    bets = context.chat_data.get('bets', {})
+    if message_id not in bets:
         await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True); return
         
-    bet_info = context.chat_data['active_bet']['info']
-    if user.id in bet_info['participants']:
-        await query.answer("شما قبلا در این شرط‌بندی شرکت کرده‌اید.", show_alert=True); return
+    if user.id in context.chat_data.get('users_in_bet', set()):
+        await query.answer("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید.", show_alert=True); return
 
+    bet_info = bets[message_id]
     if get_user(user.id, user.username)['balance'] < bet_info['amount']:
         await query.answer("موجودی شما برای شرکت در این شرط‌بندی کافی نیست.", show_alert=True); return
         
     bet_info['participants'].add(user.id)
+    context.chat_data['users_in_bet'].add(user.id)
+    
     await query.answer("شما به شرط پیوستید! نتیجه بلافاصله اعلام می‌شود...", show_alert=False)
 
-    job = context.chat_data['active_bet']['job']
-    job.schedule_removal()
-    await resolve_bet_logic(chat_id=update.effective_chat.id, message_id=context.chat_data['active_bet']['msg_id'], bet_info=bet_info, context=context)
+    bet_info['job'].schedule_removal()
+    # Remove the bet from the active list immediately
+    context.chat_data['bets'].pop(message_id, None)
+    await resolve_bet_logic(chat_id=update.effective_chat.id, message_id=message_id, bet_info=bet_info, context=context)
 
 async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if 'active_bet' not in context.chat_data:
+    message_id = int(query.data.split("_")[-1])
+
+    bets = context.chat_data.get('bets', {})
+    if message_id not in bets:
         await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True); return
     
-    bet_info = context.chat_data['active_bet']['info']
+    bet_info = bets[message_id]
     if query.from_user.id != bet_info['creator_id']:
         await query.answer("فقط شروع‌کننده می‌تواند شرط را لغو کند.", show_alert=True); return
 
-    job = context.chat_data['active_bet']['job']
-    job.schedule_removal()
-    context.chat_data.pop('active_bet', None)
+    bet_info['job'].schedule_removal()
+    
+    # Free up participants
+    if 'users_in_bet' in context.chat_data:
+        for p_id in bet_info['participants']:
+            context.chat_data['users_in_bet'].discard(p_id)
+            
+    # Remove bet
+    context.chat_data['bets'].pop(message_id, None)
+
     await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد.")
     await query.answer("شرط با موفقیت لغو شد.")
 
@@ -819,8 +866,8 @@ def main() -> None:
     application.add_handler(buy_conv); application.add_handler(self_pro_activation_conv); application.add_handler(admin_conv)
     
     application.add_handler(CommandHandler("bet", start_bet, filters=filters.ChatType.GROUPS))
-    application.add_handler(CallbackQueryHandler(join_bet, pattern="^join_bet$"))
-    application.add_handler(CallbackQueryHandler(cancel_bet, pattern="^cancel_bet$"))
+    application.add_handler(CallbackQueryHandler(join_bet, pattern=r"^join_bet_"))
+    application.add_handler(CallbackQueryHandler(cancel_bet, pattern=r"^cancel_bet_"))
     application.add_handler(CallbackQueryHandler(handle_transaction_approval, pattern=r"^(approve|reject)_\d+$"))
 
     application.add_handler(CallbackQueryHandler(toggle_self_pause, pattern=r"^self_(pause|resume)$"))

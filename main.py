@@ -43,7 +43,8 @@ from pyrogram.errors import (
     PhoneCodeInvalid,
     PhoneNumberInvalid,
     PasswordHashInvalid,
-    ApiIdInvalid
+    ApiIdInvalid,
+    PhoneCodeExpired
 )
 
 # تنظیمات لاگ‌گیری برای دیباگ
@@ -419,7 +420,7 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent_code = await client.send_code(phone)
         context.user_data.update({'phone_code_hash': sent_code.phone_code_hash, 'client': client})
         await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:"); return ASK_CODE
-    except (ApiIdInvalid, PhoneNumberInvalid):
+    except (ApiIdInvalid, PhoneNumberInvalid) as e:
         error_text = "شماره تلفن نامعتبر است." if isinstance(e, PhoneNumberInvalid) else "API ID یا API Hash نامعتبر است."
         await update.message.reply_text(f"{error_text} لطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
@@ -445,10 +446,23 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client.sign_in(context.user_data['phone'], context.user_data['phone_code_hash'], code)
         await process_self_activation(update, context, client)
         return ConversationHandler.END
-    except SessionPasswordNeeded: await update.message.reply_text("رمز تایید دو مرحله‌ای را وارد کنید:"); return ASK_PASSWORD
-    except PhoneCodeInvalid: await update.message.reply_text("کد اشتباه است. مجددا تلاش کنید."); return ASK_CODE
+    except SessionPasswordNeeded: 
+        await update.message.reply_text("رمز تایید دو مرحله‌ای را وارد کنید:")
+        return ASK_PASSWORD
+    except PhoneCodeInvalid: 
+        await update.message.reply_text("کد اشتباه است. مجددا تلاش کنید.")
+        return ASK_CODE
+    except PhoneCodeExpired:
+        await update.message.reply_text(
+            "کد تایید منقضی شده است. لطفا فرآیند فعال‌سازی را دوباره از ابتدا شروع کنید.",
+            reply_markup=await main_reply_keyboard(update.effective_user.id)
+        )
+        if client.is_connected: await client.disconnect()
+        return ConversationHandler.END
     except Exception as e:
-        logger.error(f"Error on sign in: {e}"); await update.message.reply_text("خطا!", reply_markup=await main_reply_keyboard(update.effective_user.id)); await client.disconnect()
+        logger.error(f"Error on sign in: {e}")
+        await update.message.reply_text("خطا!", reply_markup=await main_reply_keyboard(update.effective_user.id))
+        if client.is_connected: await client.disconnect()
         return ConversationHandler.END
 
 async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -458,7 +472,9 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await client.check_password(password)
         await process_self_activation(update, context, client)
-    except Exception: await update.message.reply_text("رمز عبور اشتباه است.", reply_markup=await main_reply_keyboard(update.effective_user.id)); await client.disconnect()
+    except Exception: 
+        await update.message.reply_text("رمز عبور اشتباه است.", reply_markup=await main_reply_keyboard(update.effective_user.id))
+        if client.is_connected: await client.disconnect()
     return ConversationHandler.END
 
 async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_TYPE, client: Client):
@@ -666,16 +682,22 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
 # --- منطق شرط‌بندی ---
 async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, context: ContextTypes.DEFAULT_TYPE):
+    # حذف دکمه‌ها و نمایش پیام "در حال..."
     await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="🎲 در حال مشخص شدن برنده...", reply_markup=None)
-    await asyncio.sleep(3)
+    await asyncio.sleep(3) # تاخیر برای هیجان
 
     participants_data = { p_id: get_user(p_id) for p_id in bet_info['participants'] }
     
+    # آزاد کردن کاربران از حالت شرط‌بندی
     if 'users_in_bet' in context.chat_data:
         for p_id in bet_info['participants']:
             context.chat_data['users_in_bet'].discard(p_id)
 
-    winner_id = random.choice(list(participants_data.keys()))
+    # انتخاب برنده به صورت کاملاً تصادفی
+    participants_list = list(participants_data.keys())
+    random.shuffle(participants_list)
+    winner_id = participants_list[0]
+    
     losers_data = {uid: udata for uid, udata in participants_data.items() if uid != winner_id}
     
     bet_amount = bet_info['amount']
@@ -883,8 +905,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(change_font_menu, pattern=r"^change_font_menu$"))
     application.add_handler(CallbackQueryHandler(set_font, pattern=r"^set_font_"))
     application.add_handler(CallbackQueryHandler(back_to_self_menu, pattern=r"^back_to_self_menu$"))
-    application.add_handler(CallbackQueryHandler(delete_self_confirm, pattern="^delete_self_confirm$"))
-    application.add_handler(CallbackQueryHandler(delete_self_final, pattern="^delete_self_final$"))
+    application.add_handler(CallbackQueryHandler(delete_self_confirm, pattern=r"^delete_self_confirm$"))
+    application.add_handler(CallbackQueryHandler(delete_self_final, pattern=r"^delete_self_final$"))
 
     application.add_handler(MessageHandler(filters.Regex('^💎 موجودی$'), check_balance_text_handler))
     application.add_handler(MessageHandler(filters.Regex('^🎁 کسب جم رایگان$'), referral_menu_text_handler))

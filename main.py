@@ -56,7 +56,10 @@ def index():
     return "Bot is running!"
 
 def run_flask():
-    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # gunicorn را برای محیط production استفاده می‌کنیم
+    # این بخش در render.yaml مدیریت می‌شود، اینجا فقط برای تست محلی است
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port)
 
 # --- تنظیمات اولیه و متغیرها ---
 # این مقادیر باید در بخش Environment Variables در Render تنظیم شوند
@@ -66,8 +69,12 @@ API_HASH = os.environ.get("API_HASH", "4e52f6f12c47a0da918009260b6e3d44")
 OWNER_ID = int(os.environ.get("OWNER_ID", "7423552124")) # ادمین اصلی
 
 # مسیر دیتابیس در دیسک پایدار Render
-DB_PATH = os.path.join(os.environ.get("RENDER_DISK_PATH", "."), "bot_database.db")
-SESSION_PATH = os.environ.get("RENDER_DISK_PATH", ".")
+DB_PATH = os.path.join(os.environ.get("RENDER_DISK_PATH", "data"), "bot_database.db")
+SESSION_PATH = os.path.join(os.environ.get("RENDER_DISK_PATH", "data"))
+
+# اطمینان از وجود دایرکتوری‌ها
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
 
 # مراحل ConversationHandler برای فرآیندهای چندمرحله‌ای
 (
@@ -255,11 +262,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     # بررسی دعوت
     if context.args and len(context.args) > 0:
-        referrer_id = int(context.args[0])
-        if referrer_id != user.id:
-            # اینجا منطق بررسی عضویت در کانال و اعطای جایزه پیاده‌سازی شود
-            logger.info(f"User {user.id} was referred by {referrer_id}")
-            # ...
+        try:
+            referrer_id = int(context.args[0])
+            if referrer_id != user.id:
+                # اینجا منطق بررسی عضویت در کانال و اعطای جایزه پیاده‌سازی شود
+                logger.info(f"User {user.id} was referred by {referrer_id}")
+                # ...
+        except (ValueError, IndexError):
+            pass # آرگومان نامعتبر
     
     await update.message.reply_text(
         f"سلام {user.first_name}!\nبه ربات Self Pro خوش آمدید.",
@@ -319,8 +329,12 @@ async def await_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
     receipt_file_id = update.message.photo[-1].file_id
-    amount = context.user_data['purchase_amount']
-    cost = context.user_data['purchase_cost']
+    amount = context.user_data.get('purchase_amount', 0)
+    cost = context.user_data.get('purchase_cost', 0)
+    
+    if amount == 0:
+        await update.message.reply_text("خطایی رخ داده است. لطفا فرآیند خرید را مجددا شروع کنید.")
+        return ConversationHandler.END
 
     # ذخیره تراکنش در دیتابیس
     con, cur = db_connect()
@@ -361,8 +375,13 @@ async def handle_transaction_approval(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     await query.answer()
     
-    action, transaction_id = query.data.split("_")
-    transaction_id = int(transaction_id)
+    try:
+        action, transaction_id_str = query.data.split("_")
+        transaction_id = int(transaction_id_str)
+    except (ValueError, IndexError):
+        logger.warning(f"Invalid callback data received: {query.data}")
+        return
+
     admin_id = query.from_user.id
     
     con, cur = db_connect()
@@ -442,10 +461,16 @@ async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text("کد تایید ارسال شده به تلگرام شما را وارد کنید:")
         return ASK_CODE
-    except (PhoneNumberInvalid, Exception) as e:
-        logger.error(f"Error sending code for {phone}: {e}")
+    except PhoneNumberInvalid:
         await update.message.reply_text("شماره تلفن نامعتبر است. لطفا دوباره تلاش کنید.")
+        await client.disconnect()
         return ASK_PHONE
+    except Exception as e:
+        logger.error(f"Error sending code for {phone}: {e}")
+        await update.message.reply_text("خطایی در اتصال به تلگرام رخ داد. لطفا بعدا تلاش کنید.")
+        await client.disconnect()
+        return ConversationHandler.END
+
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text
@@ -461,9 +486,13 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except SessionPasswordNeeded:
         await update.message.reply_text("حساب شما دارای تایید دو مرحله‌ای است. لطفا رمز خود را وارد کنید:")
         return ASK_PASSWORD
-    except (PhoneCodeInvalid, Exception) as e:
-        logger.error(f"Error on sign in with code: {e}")
+    except PhoneCodeInvalid:
         await update.message.reply_text("کد وارد شده اشتباه است. لطفا مجددا تلاش کنید.")
+        # نیازی به قطع اتصال نیست، کاربر کد جدید را امتحان می‌کند
+        return ASK_CODE
+    except Exception as e:
+        logger.error(f"Error on sign in with code: {e}")
+        await update.message.reply_text("خطایی رخ داد. فرآیند لغو شد.")
         await client.disconnect()
         return ConversationHandler.END
 
@@ -474,9 +503,12 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await client.check_password(password)
         await process_self_activation(update, context, client)
-    except (PasswordHashInvalid, Exception) as e:
-        logger.error(f"Error on 2FA check: {e}")
+    except PasswordHashInvalid:
         await update.message.reply_text("رمز عبور اشتباه است. فرآیند لغو شد.")
+        await client.disconnect()
+    except Exception as e:
+        logger.error(f"Error on 2FA check: {e}")
+        await update.message.reply_text("خطایی رخ داد. فرآیند لغو شد.")
         await client.disconnect()
     
     return ConversationHandler.END
@@ -502,6 +534,13 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
 
 async def self_pro_background_task(user_id: int, client: Client):
     """تسک پس‌زمینه برای کسر هزینه و آپدیت پروفایل"""
+    if not client.is_connected:
+        try:
+            await client.start()
+        except Exception as e:
+            logger.error(f"Could not start client for user {user_id} in background task: {e}")
+            return
+            
     while user_id in user_sessions:
         user = get_user(user_id)
         if not user or not user['self_active']:
@@ -517,9 +556,10 @@ async def self_pro_background_task(user_id: int, client: Client):
             con.commit()
             con.close()
             
-            await client.disconnect()
+            await client.stop()
             del user_sessions[user_id]
             try:
+                # از آبجکت application که global است استفاده می‌کنیم
                 await application.bot.send_message(user_id, "موجودی الماس شما تمام شد و Self Pro غیرفعال گردید.")
             except Exception as e:
                 logger.warning(f"Could not notify user {user_id} about self deactivation: {e}")
@@ -533,7 +573,9 @@ async def self_pro_background_task(user_id: int, client: Client):
             me = await client.get_me()
             # این بخش را میتوانید برای حذف زمان قبلی از نام، بهینه کنید
             now = datetime.now().strftime("%H:%M")
-            await client.update_profile(first_name=f"{me.first_name} | {now}")
+            # فرض بر این است که نام پایه در دیتابیس ذخیره شده
+            base_name = me.first_name.split('|')[0].strip()
+            await client.update_profile(first_name=f"{base_name} | {now}")
         except Exception as e:
             logger.error(f"Failed to update profile for {user_id}: {e}")
 
@@ -585,7 +627,7 @@ async def transfer_diamond_info(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """مدیریت انتقال الماس با ریپلای"""
-    if not update.message.reply_to_message:
+    if not update.message or not update.message.reply_to_message:
         return
 
     try:
@@ -608,6 +650,7 @@ async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     # انجام تراکنش
+    get_user(receiver.id) # اطمینان از وجود کاربر گیرنده در دیتابیس
     update_user_balance(sender.id, amount, add=False)
     update_user_balance(receiver.id, amount, add=True)
 
@@ -634,6 +677,12 @@ async def self_pro_menu_handler(update: Update, context: ContextTypes.DEFAULT_TY
         "منوی مدیریت Self Pro:",
         reply_markup=await self_pro_menu_keyboard(query.from_user.id)
     )
+    
+async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت پیام‌های متنی برای حالت Enemy/Offline"""
+    # این تابع در حال حاضر کاری انجام نمی‌دهد و باید پیاده‌سازی شود
+    logger.info(f"Received a text message from {update.effective_user.id}")
+
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """لغو کردن و پایان مکالمه"""
@@ -673,6 +722,7 @@ def main() -> None:
             AWAIT_RECEIPT: [MessageHandler(filters.PHOTO, await_receipt)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False
     )
     
     # Conversation handler برای فعالسازی سلف
@@ -684,6 +734,7 @@ def main() -> None:
             ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False
     )
 
     # افزودن handler ها
@@ -696,18 +747,15 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(referral_menu, pattern="^referral_menu$"))
     application.add_handler(CallbackQueryHandler(transfer_diamond_info, pattern="^transfer_diamond_info$"))
     application.add_handler(CallbackQueryHandler(self_pro_menu_handler, pattern="^self_pro_menu$"))
-    application.t
-    # ثبت MessageHandler برای قابلیت‌های خاص
-    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\d+$'), transfer_diamond_handler)) # انتقال الماس
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_messages)) # Enemy/Offline mode
+    application.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin_panel$"))
+    application.add_handler(CallbackQueryHandler(handle_transaction_approval, pattern=r"^(approve|reject)_\d+$"))
 
-    # اجرای وب سرور در یک ترد جداگانه
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
+    # ثبت MessageHandler برای قابلیت‌های خاص
+    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\d+$'), handle_transfer)) # انتقال الماس
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_messages)) # Enemy/Offline mode
     
     # لاگ شروع ربات
-    logging.info("Bot is starting...")
+    logger.info("Bot is starting...")
 
     # شروع polling
     application.run_polling()
@@ -720,5 +768,4 @@ if __name__ == "__main__":
     flask_thread.start()
 
     main()
-
 
